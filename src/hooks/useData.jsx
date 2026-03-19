@@ -149,13 +149,37 @@ async function detectAndAddNew(rows, currentCustomers) {
   const newFound = [];
   const toInsert = [];
 
+  // Collect new client caps first
+  const newCaps = [];
   rows.forEach(row => {
     if (!knownCaps.has(row.clienteCap)) {
+      newCaps.push(row.clienteCap);
+      knownCaps.add(row.clienteCap);
+    }
+  });
+
+  // Check if any of these already exist in DB (e.g. seeded by seedNewClientsAgents)
+  let dbExisting = {};
+  if (newCaps.length) {
+    const { data } = await supabase
+      .from('budget_customers')
+      .select('ragione_cap, agente')
+      .in('ragione_cap', newCaps);
+    if (data) {
+      data.forEach(r => { dbExisting[r.ragione_cap] = r.agente || ''; });
+    }
+  }
+
+  // Reset knownCaps from currentCustomers (we added newCaps above just to deduplicate)
+  const knownCaps2 = new Set(currentCustomers.map(c => c.ragioneCap));
+
+  rows.forEach(row => {
+    if (!knownCaps2.has(row.clienteCap)) {
       const newCustomer = {
         ragione: row.cliente,
         ragioneCap: row.clienteCap,
         codice: '',
-        agente: '',
+        agente: dbExisting[row.clienteCap] || '',
         budgetVenditoriMesi: Array(12).fill(0),
         budgetInternoMesi: Array(12).fill(0),
         budgetVenditoriAnnuale: 0,
@@ -165,7 +189,7 @@ async function detectAndAddNew(rows, currentCustomers) {
       newFound.push(row.cliente);
       updatedCustomers.push(newCustomer);
       toInsert.push(newCustomer);
-      knownCaps.add(row.clienteCap);
+      knownCaps2.add(row.clienteCap);
     }
   });
 
