@@ -66,13 +66,19 @@ export function parseSalesFile(arrayBuffer, filename) {
   const ws = wb.Sheets[wb.SheetNames[0]];
   const raw = XLSX.utils.sheet_to_json(ws, { header: 0, defval: null });
 
+  const DEBUG_NAMES = ['GIBERTI', 'LEITECH', 'TERMOMECCANICA', 'TURBINEN'];
   const rows = raw
     .filter(r => r['Cliente'] && r['Cliente'] !== 'Totali')
     .map(r => {
-      const resolved = resolveAlias(r['Cliente']);
+      const raw_name = r['Cliente'].toString().trim();
+      const resolved = resolveAlias(raw_name);
+      const cap = normalizeClient(resolved);
+      if (DEBUG_NAMES.some(d => raw_name.toUpperCase().includes(d))) {
+        console.log(`[parseSalesFile] raw="${raw_name}" → resolved="${resolved}" → cap="${cap}"`);
+      }
       return {
         cliente: resolved,
-        clienteCap: normalizeClient(resolved),
+        clienteCap: cap,
         valore: parseFloat(r['Vendite ACT [€]']) || 0,
         valorePrv: parseFloat(r['Vendite PRV [€]']) || 0,
         qtaAct: parseFloat(r['Vendite ACT [Qtà]']) || 0,
