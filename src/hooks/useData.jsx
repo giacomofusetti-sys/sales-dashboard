@@ -57,7 +57,9 @@ export function DataProvider({ children }) {
       const existingMap = Object.fromEntries(store.customers.map(c => [c.ragioneCap, c]));
       const merged = customers.map(c => ({ ...c, isNew: existingMap[c.ragioneCap]?.isNew || false }));
       await saveBudgetToDB(merged);
-      setStore(prev => ({ ...prev, customers: merged, budgetLoaded: true, lastUpdated: new Date().toISOString() }));
+      // Reload from DB to include seeded clients from seedNewClientsAgents()
+      const allCustomers = await loadBudgetFromDB();
+      setStore(prev => ({ ...prev, customers: allCustomers, budgetLoaded: true, lastUpdated: new Date().toISOString() }));
     } catch (e) { setError('Errore budget: ' + e.message); }
     finally { setLoading(false); }
   }, [store.customers]);
