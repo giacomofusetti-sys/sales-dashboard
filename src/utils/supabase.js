@@ -32,6 +32,9 @@ export async function saveBudgetToDB(customers) {
       .upsert(chunk, { onConflict: 'ragione_cap' });
     if (error) throw error;
   }
+
+  // Seed new clients with their agents after budget upload
+  await seedNewClientsAgents();
 }
 
 export async function upsertCustomer(customer) {
@@ -148,6 +151,71 @@ export async function saveOrdiniAperti(fileDate, rows) {
   }));
   const { error } = await supabase.from('ordini_aperti').insert(dbRows);
   if (error) throw error;
+}
+
+// ── Update customer agent ────────────────────────────────────
+export async function updateCustomerAgent(ragioneCap, agente) {
+  const { error } = await supabase
+    .from('budget_customers')
+    .update({ agente, updated_at: new Date().toISOString() })
+    .eq('ragione_cap', ragioneCap);
+  if (error) throw error;
+}
+
+// ── Seed new clients with agents ─────────────────────────────
+const NEW_CLIENTS_AGENTS = [
+  ['A. STAFFELBACH AG', 'EXPORT SALES'],
+  ['AIM SERVICE ITALIA SRL', 'PIRAN MATTIA'],
+  ['AKEA SRL', 'OLTOLINI MASSIMILIANO'],
+  ['C.P.F. SRL', 'OLTOLINI MASSIMILIANO'],
+  ['CAM SPA', 'OLTOLINI MASSIMILIANO'],
+  ['CASTEL S.R.L.', 'OLTOLINI MASSIMILIANO'],
+  ['CIMA ENGINEERING SRL', 'OLTOLINI MASSIMILIANO'],
+  ['COLOMBO MAGNO SRL OFFICINA MECCANICA', 'DIRETTO'],
+  ['FP 2000 SAS DI PREMOLI GIANBATTISTA & C.', 'BANKA AGNIESZKA'],
+  ['FRAMBATI & CO. SRL A SOCIO UNICO', 'PIRAN MATTIA'],
+  ['GIBERTI S.R.L. COSTR. CALDARARIE', 'PIRAN MATTIA'],
+  ['KONECRANES PORT SERVICES GMBH', 'PIRAN MATTIA'],
+  ['LA GIEFFE SRL UNIPERSONALE', 'SOCCAL FABIO'],
+  ['PHONONIC VIBES SRL', 'OLTOLINI MASSIMILIANO'],
+  ['PIOMBINO TECH SRL', 'SOCCAL FABIO'],
+  ["ROMBOFER DI ROMBOLA' ROBERTO", 'PIRAN MATTIA'],
+  ['TONOLI IMPIANTI SRL', 'OLTOLINI MASSIMILIANO'],
+  ['DELLASETTE SRL OFFICINA MECCANICA', 'DIRETTO'],
+  ['DIRMAG SRL', 'BRENNA ALESSANDRO'],
+  ['INDUSTRIOUS GLOBAL TECHNOLOGIES S.R.L.', 'OLTOLINI MASSIMILIANO'],
+  ['LEITECH S.R.O.', 'SOCCAL FABIO'],
+  ['LI.BO SRL FORNITURE INDUSTRIALI', 'PIRAN MATTIA'],
+  ['MODOMEC', 'SOCCAL FABIO'],
+  ['POGGIOLI', 'PIRAN MATTIA'],
+  ['TENOFAST', 'OLTOLINI MASSIMILIANO'],
+  ['ZELLINGER', 'PIRAN MATTIA'],
+  ['CANNON BONO S.P.A.', 'BANKA AGNIESZKA'],
+  ['GIPO GISLER POWER AG', 'PIRAN MATTIA'],
+];
+
+export async function seedNewClientsAgents() {
+  const rows = NEW_CLIENTS_AGENTS.map(([ragione, agente]) => ({
+    ragione,
+    ragione_cap: ragione.toUpperCase(),
+    codice: '',
+    agente,
+    budget_venditori_mesi: Array(12).fill(0),
+    budget_interno_mesi: Array(12).fill(0),
+    budget_venditori_annuale: 0,
+    budget_interno_annuale: 0,
+    is_new: true,
+    updated_at: new Date().toISOString(),
+  }));
+
+  const BATCH = 200;
+  for (let i = 0; i < rows.length; i += BATCH) {
+    const chunk = rows.slice(i, i + BATCH);
+    const { error } = await supabase
+      .from('budget_customers')
+      .upsert(chunk, { onConflict: 'ragione_cap' });
+    if (error) throw error;
+  }
 }
 
 // ── Client aliases ───────────────────────────────────────────
