@@ -1,4 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
+import { resolveAlias } from './aliases.js';
+import { normalizeClient } from './parsers';
 
 const url = import.meta.env.VITE_SUPABASE_URL;
 const key = import.meta.env.VITE_SUPABASE_KEY;
@@ -195,27 +197,50 @@ const NEW_CLIENTS_AGENTS = [
 ];
 
 export async function seedNewClientsAgents() {
-  const rows = NEW_CLIENTS_AGENTS.map(([ragione, agente]) => ({
-    ragione,
-    ragione_cap: ragione.toUpperCase(),
-    codice: '',
-    agente,
-    budget_venditori_mesi: Array(12).fill(0),
-    budget_interno_mesi: Array(12).fill(0),
-    budget_venditori_annuale: 0,
-    budget_interno_annuale: 0,
-    is_new: true,
-    updated_at: new Date().toISOString(),
-  }));
+  const newClientRows = [];
 
+  for (const [ragione, agente] of NEW_CLIENTS_AGENTS) {
+    const resolved = resolveAlias(ragione);
+    const resolvedCap = normalizeClient(resolved);
+    const originalCap = normalizeClient(ragione);
+
+    if (resolvedCap !== originalCap) {
+      // Aliased client → update agent on the existing budget record (resolved name)
+      console.log(`[seed] alias: "${ragione}" → "${resolvedCap}", setting agente="${agente}"`);
+      const { error } = await supabase
+        .from('budget_customers')
+        .update({ agente, updated_at: new Date().toISOString() })
+        .eq('ragione_cap', resolvedCap);
+      if (error) console.warn(`[seed] update failed for "${resolvedCap}":`, error);
+    } else {
+      // New client → upsert full record
+      console.log(`[seed] new: "${ragione}", agente="${agente}"`);
+      newClientRows.push({
+        ragione,
+        ragione_cap: originalCap,
+        codice: '',
+        agente,
+        budget_venditori_mesi: Array(12).fill(0),
+        budget_interno_mesi: Array(12).fill(0),
+        budget_venditori_annuale: 0,
+        budget_interno_annuale: 0,
+        is_new: true,
+        updated_at: new Date().toISOString(),
+      });
+    }
+  }
+
+  // Batch upsert new (non-aliased) clients
   const BATCH = 200;
-  for (let i = 0; i < rows.length; i += BATCH) {
-    const chunk = rows.slice(i, i + BATCH);
+  for (let i = 0; i < newClientRows.length; i += BATCH) {
+    const chunk = newClientRows.slice(i, i + BATCH);
     const { error } = await supabase
       .from('budget_customers')
       .upsert(chunk, { onConflict: 'ragione_cap' });
     if (error) throw error;
   }
+
+  console.log(`[seed] done: ${newClientRows.length} new + ${NEW_CLIENTS_AGENTS.length - newClientRows.length} aliased updated`);
 }
 
 // ── Client aliases ───────────────────────────────────────────

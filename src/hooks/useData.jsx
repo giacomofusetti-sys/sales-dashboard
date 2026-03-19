@@ -59,6 +59,8 @@ export function DataProvider({ children }) {
       await saveBudgetToDB(merged);
       // Reload from DB to include seeded clients from seedNewClientsAgents()
       const allCustomers = await loadBudgetFromDB();
+      const withAgent = allCustomers.filter(c => c.isNew && c.agente);
+      console.log(`[uploadBudget] loaded ${allCustomers.length} customers, ${withAgent.length} new with agent:`, withAgent.map(c => `${c.ragioneCap} → ${c.agente}`));
       setStore(prev => ({ ...prev, customers: allCustomers, budgetLoaded: true, lastUpdated: new Date().toISOString() }));
     } catch (e) { setError('Errore budget: ' + e.message); }
     finally { setLoading(false); }
@@ -163,6 +165,7 @@ async function detectAndAddNew(rows, currentCustomers) {
   // Check if any of these already exist in DB (e.g. seeded by seedNewClientsAgents)
   let dbExisting = {};
   if (newCaps.length) {
+    console.log('[detectAndAddNew] new caps not in local state:', newCaps);
     const { data } = await supabase
       .from('budget_customers')
       .select('ragione_cap, agente')
@@ -170,6 +173,7 @@ async function detectAndAddNew(rows, currentCustomers) {
     if (data) {
       data.forEach(r => { dbExisting[r.ragione_cap] = r.agente || ''; });
     }
+    console.log('[detectAndAddNew] found in DB:', dbExisting);
   }
 
   // Reset knownCaps from currentCustomers (we added newCaps above just to deduplicate)
