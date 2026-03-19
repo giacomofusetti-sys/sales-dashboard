@@ -150,6 +150,30 @@ export async function saveOrdiniAperti(fileDate, rows) {
   if (error) throw error;
 }
 
+// ── Client aliases ───────────────────────────────────────────
+export async function loadAliases() {
+  const { data, error } = await supabase
+    .from('client_aliases')
+    .select('*');
+  if (error) throw error;
+  const map = {};
+  data.forEach(r => { map[r.sales_name] = r.budget_name; });
+  return map;
+}
+
+export async function saveAliases(aliasMap) {
+  // Clear existing aliases, then insert all
+  await supabase.from('client_aliases').delete().neq('id', 0);
+  const rows = Object.entries(aliasMap).map(([salesName, budgetName]) => ({
+    sales_name: salesName,
+    budget_name: budgetName,
+  }));
+  if (rows.length) {
+    const { error } = await supabase.from('client_aliases').insert(rows);
+    if (error) throw error;
+  }
+}
+
 // ── Helpers ───────────────────────────────────────────────────
 function customerToDB(c) {
   return {

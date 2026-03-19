@@ -1,4 +1,5 @@
 import * as XLSX from 'xlsx';
+import { resolveAlias } from './aliases.js';
 
 export const MONTHS = ['gen','feb','mar','apr','mag','giu','lug','ago','set','ott','nov','dic'];
 export const MONTH_LABELS = ['Gen','Feb','Mar','Apr','Mag','Giu','Lug','Ago','Set','Ott','Nov','Dic'];
@@ -67,13 +68,16 @@ export function parseSalesFile(arrayBuffer, filename) {
 
   const rows = raw
     .filter(r => r['Cliente'] && r['Cliente'] !== 'Totali')
-    .map(r => ({
-      cliente: r['Cliente'].toString().trim(),
-      clienteCap: normalizeClient(r['Cliente']),
-      valore: parseFloat(r['Vendite ACT [€]']) || 0,
-      valorePrv: parseFloat(r['Vendite PRV [€]']) || 0,
-      qtaAct: parseFloat(r['Vendite ACT [Qtà]']) || 0,
-    }));
+    .map(r => {
+      const resolved = resolveAlias(r['Cliente']);
+      return {
+        cliente: resolved,
+        clienteCap: normalizeClient(resolved),
+        valore: parseFloat(r['Vendite ACT [€]']) || 0,
+        valorePrv: parseFloat(r['Vendite PRV [€]']) || 0,
+        qtaAct: parseFloat(r['Vendite ACT [Qtà]']) || 0,
+      };
+    });
 
   return { month, rows };
 }
