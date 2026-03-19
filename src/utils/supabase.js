@@ -18,20 +18,13 @@ export async function loadBudgetFromDB() {
 export async function saveBudgetToDB(customers) {
   const rows = customers.map(customerToDB);
 
-  // Delete all existing rows
-  const { error: delErr } = await supabase
-    .from('budget_customers')
-    .delete()
-    .neq('id', 0);
-  if (delErr) throw delErr;
-
-  // Insert in batches of 200
+  // Upsert in batches of 200
   const BATCH = 200;
   for (let i = 0; i < rows.length; i += BATCH) {
     const chunk = rows.slice(i, i + BATCH);
     const { error } = await supabase
       .from('budget_customers')
-      .insert(chunk);
+      .upsert(chunk, { onConflict: 'ragione_cap' });
     if (error) throw error;
   }
 }
