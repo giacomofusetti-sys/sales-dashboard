@@ -18,10 +18,15 @@ export async function loadBudgetFromDB() {
 export async function saveBudgetToDB(customers) {
   const rows = customers.map(customerToDB);
 
+  // Deduplicate by ragione_cap (keep last occurrence)
+  const unique = new Map();
+  rows.forEach(r => unique.set(r.ragione_cap, r));
+  const deduped = [...unique.values()];
+
   // Upsert in batches of 200
   const BATCH = 200;
-  for (let i = 0; i < rows.length; i += BATCH) {
-    const chunk = rows.slice(i, i + BATCH);
+  for (let i = 0; i < deduped.length; i += BATCH) {
+    const chunk = deduped.slice(i, i + BATCH);
     const { error } = await supabase
       .from('budget_customers')
       .upsert(chunk, { onConflict: 'ragione_cap' });
