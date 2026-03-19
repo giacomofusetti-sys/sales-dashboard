@@ -1,108 +1,69 @@
 import { useRef } from 'react';
 import { useData } from '../hooks/useData';
-import { Upload, FileSpreadsheet, AlertCircle, CheckCircle, X } from 'lucide-react';
 import { MONTH_LABELS } from '../utils/parsers';
 
-function UploadCard({ title, subtitle, icon: Icon, iconBg, iconColor, loaded, loadedLabel, onClick, disabled }) {
-  return (
-    <div
-      onClick={disabled ? undefined : onClick}
-      style={{
-        border: '0.5px solid var(--color-border-tertiary)', borderRadius: 12,
-        padding: '1rem 1.25rem', background: 'var(--color-background-primary)',
-        cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.5 : 1,
-        transition: 'border-color 0.15s',
-      }}
-    >
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-        <div style={{ width: 34, height: 34, borderRadius: 8, background: iconBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-          <Icon size={16} color={iconColor} />
-        </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ fontWeight: 500, fontSize: 13 }}>{title}</span>
-            {loaded && <CheckCircle size={13} color="var(--color-text-success)" />}
-          </div>
-          <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 2 }}>
-            {loaded ? loadedLabel : subtitle}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
+const S = {
+  grid: { display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 8, marginBottom: 16 },
+  card: { background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', padding: '10px 14px', cursor: 'pointer', transition: 'border-color 0.15s' },
+  cardDisabled: { opacity: 0.45, cursor: 'not-allowed' },
+  label: { fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.7px', color: 'var(--text-secondary)', marginBottom: 3 },
+  sub: { fontSize: 11, color: 'var(--text-tertiary)' },
+  dot: { width: 6, height: 6, borderRadius: '50%', display: 'inline-block', marginRight: 5, verticalAlign: 'middle' },
+  error: { display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', background: 'var(--red-bg)', border: '1px solid var(--red-border)', borderRadius: 'var(--radius-md)', color: 'var(--red)', fontSize: 13, marginBottom: 12 },
+  warning: { padding: '12px 14px', background: 'var(--amber-bg)', border: '1px solid var(--amber-border)', borderRadius: 'var(--radius-md)', fontSize: 13, marginBottom: 12 },
+};
 
-export default function UploadPanel() {
-  const { store, loading, error, uploadBudget, uploadAcquisito, uploadFatturato, uploadOrdiniAperti, resetAll, newClientsLastUpload, setNewClientsLastUpload } = useData();
+export default function UploadPanel({ canUpload }) {
+  const { store, loading, error, uploadBudget, uploadAcquisito, uploadFatturato, uploadOrdiniAperti, newClientsLastUpload, setNewClientsLastUpload } = useData();
   const refs = { budget: useRef(), acq: useRef(), fat: useRef(), ord: useRef() };
 
-  const handle = (fn) => async (e) => {
-    const file = e.target.files[0];
-    if (file) await fn(file);
-    e.target.value = '';
-  };
+  const handle = fn => async e => { const f = e.target.files[0]; if (f) await fn(f); e.target.value = ''; };
 
-  const acqMonths = Object.keys(store.acquisito).map(Number).sort((a,b)=>a-b).map(m => MONTH_LABELS[m]).join(', ');
-  const fatMonths = Object.keys(store.fatturato).map(Number).sort((a,b)=>a-b).map(m => MONTH_LABELS[m]).join(', ');
+  const acqMonths = Object.keys(store.acquisito).map(Number).sort((a,b)=>a-b).map(m=>MONTH_LABELS[m]).join(', ');
+  const fatMonths = Object.keys(store.fatturato).map(Number).sort((a,b)=>a-b).map(m=>MONTH_LABELS[m]).join(', ');
+
+  const uploads = [
+    { ref: refs.budget, fn: uploadBudget, label: 'Budget 2026', sub: store.budgetLoaded ? `${store.customers.length} clienti` : 'Carica una volta ad inizio anno', loaded: store.budgetLoaded, enabled: true },
+    { ref: refs.acq,    fn: uploadAcquisito, label: 'Acquisito mensile', sub: acqMonths || 'Es: Acquisito_marzo_2026.xlsx', loaded: !!acqMonths, enabled: store.budgetLoaded },
+    { ref: refs.fat,    fn: uploadFatturato, label: 'Fatturato mensile', sub: fatMonths || 'Es: Fatturato_marzo_2026.xlsx', loaded: !!fatMonths, enabled: store.budgetLoaded },
+    { ref: refs.ord,    fn: uploadOrdiniAperti, label: 'Ordini aperti', sub: store.ordiniAperti?.fileDate || 'Dettaglio ordini del mese', loaded: !!store.ordiniAperti, enabled: true },
+  ];
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-
-      {error && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', background: 'var(--color-background-danger)', borderRadius: 8, color: 'var(--color-text-danger)', fontSize: 13 }}>
-          <AlertCircle size={14} style={{ flexShrink: 0 }} /> {error}
-        </div>
-      )}
+    <div>
+      {error && <div style={S.error}><span style={{ fontSize: 16 }}>!</span> {error}</div>}
 
       {newClientsLastUpload.length > 0 && (
-        <div style={{ padding: '12px 14px', background: 'var(--color-background-warning)', borderRadius: 8, fontSize: 13 }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-            <span style={{ fontWeight: 500, color: 'var(--color-text-warning)', display: 'flex', alignItems: 'center', gap: 6 }}>
-              <AlertCircle size={13} /> {newClientsLastUpload.length} nuovi clienti aggiunti
-            </span>
-            <button onClick={() => setNewClientsLastUpload([])} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-warning)', padding: 0 }}>
-              <X size={14} />
-            </button>
+        <div style={S.warning}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+            <span style={{ fontWeight: 600, color: 'var(--amber)' }}>★ {newClientsLastUpload.length} nuovi clienti rilevati e aggiunti</span>
+            <button onClick={() => setNewClientsLastUpload([])} style={{ background: 'none', border: 'none', color: 'var(--text-tertiary)', fontSize: 16, lineHeight: 1, padding: 0 }}>×</button>
           </div>
-          <div style={{ color: 'var(--color-text-warning)', lineHeight: 1.8 }}>
-            {newClientsLastUpload.map(c => <span key={c} style={{ display: 'block', fontSize: 12 }}>★ {c}</span>)}
-          </div>
+          {newClientsLastUpload.map(c => <div key={c} style={{ fontSize: 11, color: 'var(--amber)', marginTop: 2 }}>· {c}</div>)}
         </div>
       )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 10 }}>
-        <input ref={refs.budget} type="file" accept=".xlsx,.xls" style={{ display:'none' }} onChange={handle(uploadBudget)} />
-        <UploadCard title="Budget 2026" subtitle="Carica una volta ad inizio anno" icon={FileSpreadsheet}
-          iconBg="var(--color-background-info)" iconColor="var(--color-text-info)"
-          loaded={store.budgetLoaded} loadedLabel={`${store.customers.length} clienti`}
-          onClick={() => refs.budget.current?.click()} />
-
-        <input ref={refs.acq} type="file" accept=".xlsx,.xls" style={{ display:'none' }} onChange={handle(uploadAcquisito)} />
-        <UploadCard title="Acquisito mensile" subtitle={store.budgetLoaded ? "Es: Acquisito_marzo_2026.xlsx" : "Prima carica il budget"} icon={Upload}
-          iconBg="var(--color-background-success)" iconColor="var(--color-text-success)"
-          loaded={acqMonths.length > 0} loadedLabel={acqMonths}
-          onClick={() => refs.acq.current?.click()} disabled={!store.budgetLoaded} />
-
-        <input ref={refs.fat} type="file" accept=".xlsx,.xls" style={{ display:'none' }} onChange={handle(uploadFatturato)} />
-        <UploadCard title="Fatturato mensile" subtitle={store.budgetLoaded ? "Es: Fatturato_marzo_2026.xlsx" : "Prima carica il budget"} icon={Upload}
-          iconBg="var(--color-background-success)" iconColor="var(--color-text-success)"
-          loaded={fatMonths.length > 0} loadedLabel={fatMonths}
-          onClick={() => refs.fat.current?.click()} disabled={!store.budgetLoaded} />
-
-        <input ref={refs.ord} type="file" accept=".xlsx,.xls" style={{ display:'none' }} onChange={handle(uploadOrdiniAperti)} />
-        <UploadCard title="Ordini aperti" subtitle="Dettaglio ordini del mese" icon={FileSpreadsheet}
-          iconBg="var(--color-background-warning)" iconColor="var(--color-text-warning)"
-          loaded={!!store.ordiniAperti} loadedLabel={store.ordiniAperti?.fileDate || 'Caricato'}
-          onClick={() => refs.ord.current?.click()} />
+      <div style={S.grid}>
+        {uploads.map(u => (
+          <div key={u.label}>
+            <input ref={u.ref} type="file" accept=".xlsx,.xls" style={{ display: 'none' }} onChange={handle(u.fn)} />
+            <div
+              style={{ ...S.card, ...((!canUpload || !u.enabled) ? S.cardDisabled : {}) }}
+              onClick={() => canUpload && u.enabled && u.ref.current?.click()}
+            >
+              <div style={S.label}>
+                <span style={{ ...S.dot, background: u.loaded ? 'var(--green)' : 'var(--text-tertiary)' }} />
+                {u.label}
+              </div>
+              <div style={S.sub}>{u.sub}</div>
+            </div>
+          </div>
+        ))}
       </div>
 
-      {loading && <div style={{ textAlign: 'center', fontSize: 13, color: 'var(--color-text-secondary)', padding: '6px 0' }}>Elaborazione...</div>}
-
-      {(store.budgetLoaded || Object.keys(store.acquisito).length > 0) && !loading && (
-        <div style={{ textAlign: 'right' }}>
-          <button onClick={resetAll} style={{ fontSize: 12, color: 'var(--color-text-danger)', background: 'none', border: 'none', cursor: 'pointer' }}>
-            Reset tutti i dati
-          </button>
+      {loading && (
+        <div style={{ textAlign: 'center', fontSize: 12, color: 'var(--text-tertiary)', padding: '4px 0' }}>
+          Caricamento...
         </div>
       )}
     </div>
