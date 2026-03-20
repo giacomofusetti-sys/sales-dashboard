@@ -64,7 +64,7 @@ function AgentRow({ agent }) {
   );
 }
 
-export default function AgentView({ agentRows, agentFilter, onAgentFilterChange, onExportCSV }) {
+export default function AgentView({ agentRows, agentFilter, onAgentFilterChange, onExportCSV, onExportAllAgents }) {
   if (!agentRows?.length) return <div style={{ textAlign: 'center', color: 'var(--text-tertiary)', padding: '3rem', fontSize: 13 }}>Nessun dato disponibile</div>;
 
   const filtered = agentFilter ? agentRows.filter(a => a.agente === agentFilter) : agentRows;
@@ -84,6 +84,10 @@ export default function AgentView({ agentRows, agentFilter, onAgentFilterChange,
             Esporta CSV
           </button>
         )}
+        <button onClick={onExportAllAgents}
+          style={{ fontSize: 12, padding: '6px 14px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)', cursor: 'pointer', fontWeight: 600 }}>
+          Esporta tutti gli agenti
+        </button>
       </div>
       <div style={{ overflowX: 'auto', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>

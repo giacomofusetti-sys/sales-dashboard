@@ -260,3 +260,34 @@ export function exportCSV(rows, filename) {
   a.click();
   URL.revokeObjectURL(url);
 }
+
+export function exportAgentsSummaryCSV(agentRows, filename) {
+  const headers = ['Agente', 'Acquisito', 'Fatturato', 'Bdg Vend.', 'Bdg Int.', 'Δ Acq/BV', '% Acq/BV', 'Δ Fat/BV', '% Fat/BV', 'Δ Acq/BI', '% Acq/BI', 'Prev. Anno', '% Prev/BV Ann.', 'N. Clienti'];
+  const csvRows = [headers.join(';')];
+  agentRows.forEach(a => {
+    csvRows.push([
+      `"${(a.agente || '').replace(/"/g, '""')}"`,
+      a.acquisito || 0,
+      a.fatturato || 0,
+      a.budgetVend || 0,
+      a.budgetInt || 0,
+      a.scostAcqVsBudgetVend || 0,
+      a.pctAcqVsBudgetVend != null ? (a.pctAcqVsBudgetVend * 100).toFixed(1) + '%' : '',
+      a.scostFatVsBudgetVend || 0,
+      a.pctFatVsBudgetVend != null ? (a.pctFatVsBudgetVend * 100).toFixed(1) + '%' : '',
+      a.scostAcqVsBudgetInt || 0,
+      a.pctAcqVsBudgetInt != null ? (a.pctAcqVsBudgetInt * 100).toFixed(1) + '%' : '',
+      a.previsioneAnno || 0,
+      a.pctPrevVsBudgetVendAnn != null ? (a.pctPrevVsBudgetVendAnn * 100).toFixed(1) + '%' : '',
+      a.clienti?.length || 0,
+    ].join(';'));
+  });
+  const bom = '\uFEFF';
+  const blob = new Blob([bom + csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const el = document.createElement('a');
+  el.href = url;
+  el.download = filename;
+  el.click();
+  URL.revokeObjectURL(url);
+}
