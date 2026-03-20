@@ -95,6 +95,8 @@ export function computeMonthRows(store, month) {
       pctFatVsBudgetVend: pct(fatturato, budgetVend),
       scostAcqVsBudgetInt: acquisito - budgetInt,
       pctAcqVsBudgetInt: pct(acquisito, budgetInt),
+      scostFatVsBudgetInt: fatturato - budgetInt,
+      pctFatVsBudgetInt: pct(fatturato, budgetInt),
       ordiniAnno,
       previsioneAnno,
       pctPrevVsBudgetVendAnn: pct(previsioneAnno, budgetVendAnnuale),
@@ -151,6 +153,8 @@ export function computeYTDRows(store, upToMonth) {
       pctFatVsBudgetVend: pct(r.fatturato, budgetVend),
       scostAcqVsBudgetInt: r.acquisito - budgetInt,
       pctAcqVsBudgetInt: pct(r.acquisito, budgetInt),
+      scostFatVsBudgetInt: r.fatturato - budgetInt,
+      pctFatVsBudgetInt: pct(r.fatturato, budgetInt),
       ordiniAnno,
       previsioneAnno,
       pctPrevVsBudgetVendAnn: pct(previsioneAnno, budgetVendAnnuale),
@@ -180,6 +184,8 @@ export function groupByAgent(rows) {
     pctAcqVsBudgetInt: pct(a.acquisito, a.budgetInt),
     scostFatVsBudgetVend: a.fatturato - a.budgetVend,
     pctFatVsBudgetVend: pct(a.fatturato, a.budgetVend),
+    scostFatVsBudgetInt: a.fatturato - a.budgetInt,
+    pctFatVsBudgetInt: pct(a.fatturato, a.budgetInt),
     pctPrevVsBudgetVendAnn: pct(a.previsioneAnno, a.budgetVendAnnuale),
   })).sort((a, b) => b.acquisito - a.acquisito);
 }

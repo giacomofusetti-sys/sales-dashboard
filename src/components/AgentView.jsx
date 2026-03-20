@@ -11,7 +11,7 @@ function Pct({ n }) {
   return <span style={{ color: n >= 0 ? 'var(--green)' : 'var(--red)', fontWeight: 600, fontSize: 11 }}>{fmtPct(n)}</span>;
 }
 
-const HDRS = ['Agente / Cliente', 'Acquisito', 'Fatturato', 'Budget Vend.', 'Δ Acq/BV', '% Acq/BV', 'Δ Acq/BI', '% Acq/BI', 'Prev. Anno', '% Prev/BV Ann.'];
+const HDRS = ['Agente / Cliente', 'Acquisito', 'Fatturato', 'Bdg Vend.', 'Bdg Int.', 'Δ Acq/BV', '% Acq/BV', 'Δ Fat/BV', '% Fat/BV', 'Δ Acq/BI', '% Acq/BI', 'Δ Fat/BI', '% Fat/BI', 'Prev. Anno', '% Prev/BV Ann.'];
 
 function AgentRow({ agent }) {
   const [open, setOpen] = useState(false);
@@ -36,10 +36,15 @@ function AgentRow({ agent }) {
         <td style={{ padding: '10px 12px', textAlign: 'right' }}><span className="num">{fmt(agent.acquisito)}</span></td>
         <td style={{ padding: '10px 12px', textAlign: 'right' }}><span className="num">{fmt(agent.fatturato)}</span></td>
         <td style={{ padding: '10px 12px', textAlign: 'right' }}><span className="num">{fmt(agent.budgetVend)}</span></td>
+        <td style={{ padding: '10px 12px', textAlign: 'right' }}><span className="num">{fmt(agent.budgetInt)}</span></td>
         <td style={{ padding: '10px 12px', textAlign: 'right' }}><Delta n={agent.scostAcqVsBudgetVend}/></td>
         <td style={{ padding: '10px 12px', textAlign: 'right' }}><Pct n={agent.pctAcqVsBudgetVend}/></td>
+        <td style={{ padding: '10px 12px', textAlign: 'right' }}><Delta n={agent.scostFatVsBudgetVend}/></td>
+        <td style={{ padding: '10px 12px', textAlign: 'right' }}><Pct n={agent.pctFatVsBudgetVend}/></td>
         <td style={{ padding: '10px 12px', textAlign: 'right' }}><Delta n={agent.scostAcqVsBudgetInt}/></td>
         <td style={{ padding: '10px 12px', textAlign: 'right' }}><Pct n={agent.pctAcqVsBudgetInt}/></td>
+        <td style={{ padding: '10px 12px', textAlign: 'right' }}><Delta n={agent.scostFatVsBudgetInt}/></td>
+        <td style={{ padding: '10px 12px', textAlign: 'right' }}><Pct n={agent.pctFatVsBudgetInt}/></td>
         <td style={{ padding: '10px 12px', textAlign: 'right' }}><span className="num">{fmt(agent.previsioneAnno)}</span></td>
         <td style={{ padding: '10px 12px', textAlign: 'right' }}><Pct n={agent.pctPrevVsBudgetVendAnn}/></td>
       </tr>
@@ -52,10 +57,15 @@ function AgentRow({ agent }) {
           <td style={{ padding: '7px 12px', textAlign: 'right', fontSize: 12 }}><span className="num">{fmt(c.acquisito)}</span></td>
           <td style={{ padding: '7px 12px', textAlign: 'right', fontSize: 12 }}><span className="num">{fmt(c.fatturato)}</span></td>
           <td style={{ padding: '7px 12px', textAlign: 'right', fontSize: 12 }}><span className="num">{fmt(c.budgetVend)}</span></td>
+          <td style={{ padding: '7px 12px', textAlign: 'right', fontSize: 12 }}><span className="num">{fmt(c.budgetInt)}</span></td>
           <td style={{ padding: '7px 12px', textAlign: 'right', fontSize: 12 }}><Delta n={c.scostAcqVsBudgetVend}/></td>
           <td style={{ padding: '7px 12px', textAlign: 'right', fontSize: 12 }}><Pct n={c.pctAcqVsBudgetVend}/></td>
+          <td style={{ padding: '7px 12px', textAlign: 'right', fontSize: 12 }}><Delta n={c.scostFatVsBudgetVend}/></td>
+          <td style={{ padding: '7px 12px', textAlign: 'right', fontSize: 12 }}><Pct n={c.pctFatVsBudgetVend}/></td>
           <td style={{ padding: '7px 12px', textAlign: 'right', fontSize: 12 }}><Delta n={c.scostAcqVsBudgetInt}/></td>
           <td style={{ padding: '7px 12px', textAlign: 'right', fontSize: 12 }}><Pct n={c.pctAcqVsBudgetInt}/></td>
+          <td style={{ padding: '7px 12px', textAlign: 'right', fontSize: 12 }}><Delta n={c.scostFatVsBudgetInt}/></td>
+          <td style={{ padding: '7px 12px', textAlign: 'right', fontSize: 12 }}><Pct n={c.pctFatVsBudgetInt}/></td>
           <td style={{ padding: '7px 12px', textAlign: 'right', fontSize: 12 }}><span className="num">{fmt(c.previsioneAnno)}</span></td>
           <td style={{ padding: '7px 12px', textAlign: 'right', fontSize: 12 }}><Pct n={c.pctPrevVsBudgetVendAnn}/></td>
         </tr>

@@ -14,6 +14,8 @@ const COLS = [
   { key: 'pctFatVsBudgetVend',   label: '% Fat/BV',        align: 'right', pct: true },
   { key: 'scostAcqVsBudgetInt',  label: 'Δ Acq/BI',        align: 'right', delta: true },
   { key: 'pctAcqVsBudgetInt',    label: '% Acq/BI',        align: 'right', pct: true },
+  { key: 'scostFatVsBudgetInt',  label: 'Δ Fat/BI',        align: 'right', delta: true },
+  { key: 'pctFatVsBudgetInt',    label: '% Fat/BI',        align: 'right', pct: true },
   { key: 'previsioneAnno',       label: 'Prev. Anno',       align: 'right', fmt },
   { key: 'pctPrevVsBudgetVendAnn', label: '% Prev/BV Ann.', align: 'right', pct: true },
 ];
