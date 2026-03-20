@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { fmt, fmtDelta } from '../utils/analytics';
+import { fmt, fmtDelta, fmtPct } from '../utils/analytics';
 
 const COLS = [
   { key: 'cliente',              label: 'Cliente',          align: 'left'  },
@@ -9,13 +9,23 @@ const COLS = [
   { key: 'budgetVend',           label: 'Bdg Vend.',        align: 'right', fmt },
   { key: 'budgetInt',            label: 'Bdg Int.',         align: 'right', fmt },
   { key: 'scostAcqVsBudgetVend', label: 'Δ Acq/BV',        align: 'right', delta: true },
+  { key: 'pctAcqVsBudgetVend',   label: '% Acq/BV',        align: 'right', pct: true },
   { key: 'scostFatVsBudgetVend', label: 'Δ Fat/BV',        align: 'right', delta: true },
+  { key: 'pctFatVsBudgetVend',   label: '% Fat/BV',        align: 'right', pct: true },
   { key: 'scostAcqVsBudgetInt',  label: 'Δ Acq/BI',        align: 'right', delta: true },
+  { key: 'pctAcqVsBudgetInt',    label: '% Acq/BI',        align: 'right', pct: true },
+  { key: 'previsioneAnno',       label: 'Prev. Anno',       align: 'right', fmt },
+  { key: 'pctPrevVsBudgetVendAnn', label: '% Prev/BV Ann.', align: 'right', pct: true },
 ];
 
 function Delta({ n }) {
   if (n == null || isNaN(n)) return <span style={{ color: 'var(--text-tertiary)' }}>—</span>;
   return <span style={{ color: n >= 0 ? 'var(--green)' : 'var(--red)', fontWeight: 600 }}>{fmtDelta(n)}</span>;
+}
+
+function Pct({ n }) {
+  if (n == null || isNaN(n) || !isFinite(n)) return <span style={{ color: 'var(--text-tertiary)' }}>—</span>;
+  return <span style={{ color: n >= 0 ? 'var(--green)' : 'var(--red)', fontWeight: 600, fontSize: 11 }}>{fmtPct(n)}</span>;
 }
 
 function Th({ col, sortKey, sortDir, onSort }) {
@@ -68,7 +78,8 @@ export default function DataTable({ rows, agentFilter, showNewOnly }) {
                         {row.isNew && <span style={{ fontSize: 9, background: 'var(--amber-bg)', color: 'var(--amber)', border: '1px solid var(--amber-border)', borderRadius: 3, padding: '1px 5px', fontWeight: 600, flexShrink: 0 }}>NUOVO</span>}
                         <span style={{ fontWeight: row.isNew ? 600 : 400 }}>{row.cliente}</span>
                       </span>
-                    ) : col.delta ? <Delta n={row[col.key]} />
+                    ) : col.pct ? <Pct n={row[col.key]} />
+                      : col.delta ? <Delta n={row[col.key]} />
                       : col.fmt ? <span className="num" style={{ fontSize: 13 }}>{col.fmt(row[col.key])}</span>
                       : <span style={{ color: 'var(--text-secondary)' }}>{row[col.key] ?? '—'}</span>}
                   </td>

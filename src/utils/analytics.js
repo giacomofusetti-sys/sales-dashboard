@@ -19,9 +19,39 @@ function buildBudgetMap(customers) {
   return Object.fromEntries(customers.map(c => [c.ragioneCap, c]));
 }
 
+// Compute ordini aperti per client with delivery date within 2026
+function computeOrdiniByClient(store) {
+  if (!store.ordiniAperti?.rows) return {};
+  const map = {};
+  store.ordiniAperti.rows.forEach(r => {
+    if (isDateWithinYear(r.dataConsegna, 2026)) {
+      map[r.clienteCap] = (map[r.clienteCap] || 0) + r.valoreAperti;
+    }
+  });
+  return map;
+}
+
+function isDateWithinYear(dateStr, year) {
+  if (!dateStr) return true;
+  // Try dd/mm/yyyy
+  const parts = dateStr.split('/');
+  if (parts.length === 3) {
+    const y = parseInt(parts[2]);
+    return !isNaN(y) && y <= year;
+  }
+  const d = new Date(dateStr);
+  if (!isNaN(d)) return d.getFullYear() <= year;
+  return true;
+}
+
+function pct(value, budget) {
+  return budget ? (value / budget) - 1 : null;
+}
+
 // Merge acquisito + fatturato for a single month into per-client rows
 export function computeMonthRows(store, month) {
   const budgetMap = buildBudgetMap(store.customers);
+  const ordiniMap = computeOrdiniByClient(store);
   const acqRows = store.acquisito[month] || [];
   const fatRows = store.fatturato[month] || [];
 
@@ -45,6 +75,9 @@ export function computeMonthRows(store, month) {
     const fatturato = fat?.valore || 0;
     const budgetVend = budget?.budgetVenditoriMesi[month] || 0;
     const budgetInt = budget?.budgetInternoMesi[month] || 0;
+    const budgetVendAnnuale = budget?.budgetVenditoriAnnuale || 0;
+    const ordiniAnno = ordiniMap[cap] || 0;
+    const previsioneAnno = fatturato + ordiniAnno;
 
     rows.push({
       cliente: budget?.ragione || acq?.cliente || fat?.cliente || cap,
@@ -55,10 +88,16 @@ export function computeMonthRows(store, month) {
       fatturato,
       budgetVend,
       budgetInt,
+      budgetVendAnnuale,
       scostAcqVsBudgetVend: acquisito - budgetVend,
-      scostAcqVsBudgetInt: acquisito - budgetInt,
+      pctAcqVsBudgetVend: pct(acquisito, budgetVend),
       scostFatVsBudgetVend: fatturato - budgetVend,
-      scostFatVsBudgetInt: fatturato - budgetInt,
+      pctFatVsBudgetVend: pct(fatturato, budgetVend),
+      scostAcqVsBudgetInt: acquisito - budgetInt,
+      pctAcqVsBudgetInt: pct(acquisito, budgetInt),
+      ordiniAnno,
+      previsioneAnno,
+      pctPrevVsBudgetVendAnn: pct(previsioneAnno, budgetVendAnnuale),
     });
   });
 
@@ -68,6 +107,7 @@ export function computeMonthRows(store, month) {
 // YTD: aggregate from month 0 to upToMonth (inclusive)
 export function computeYTDRows(store, upToMonth) {
   const budgetMap = buildBudgetMap(store.customers);
+  const ordiniMap = computeOrdiniByClient(store);
   const ytd = {};
 
   for (let m = 0; m <= upToMonth; m++) {
@@ -91,6 +131,10 @@ export function computeYTDRows(store, upToMonth) {
       budgetVend += budget?.budgetVenditoriMesi[m] || 0;
       budgetInt += budget?.budgetInternoMesi[m] || 0;
     }
+    const budgetVendAnnuale = budget?.budgetVenditoriAnnuale || 0;
+    const ordiniAnno = ordiniMap[r.cap] || 0;
+    const previsioneAnno = r.fatturato + ordiniAnno;
+
     return {
       cliente: budget?.ragione || r.label,
       clienteCap: r.cap,
@@ -100,10 +144,16 @@ export function computeYTDRows(store, upToMonth) {
       fatturato: r.fatturato,
       budgetVend,
       budgetInt,
+      budgetVendAnnuale,
       scostAcqVsBudgetVend: r.acquisito - budgetVend,
-      scostAcqVsBudgetInt: r.acquisito - budgetInt,
+      pctAcqVsBudgetVend: pct(r.acquisito, budgetVend),
       scostFatVsBudgetVend: r.fatturato - budgetVend,
-      scostFatVsBudgetInt: r.fatturato - budgetInt,
+      pctFatVsBudgetVend: pct(r.fatturato, budgetVend),
+      scostAcqVsBudgetInt: r.acquisito - budgetInt,
+      pctAcqVsBudgetInt: pct(r.acquisito, budgetInt),
+      ordiniAnno,
+      previsioneAnno,
+      pctPrevVsBudgetVendAnn: pct(previsioneAnno, budgetVendAnnuale),
     };
   }).sort((a, b) => b.acquisito - a.acquisito);
 }
@@ -112,19 +162,25 @@ export function groupByAgent(rows) {
   const map = {};
   rows.forEach(r => {
     const ag = r.agente || '(senza agente)';
-    if (!map[ag]) map[ag] = { agente: ag, acquisito: 0, fatturato: 0, budgetVend: 0, budgetInt: 0, clienti: [] };
+    if (!map[ag]) map[ag] = { agente: ag, acquisito: 0, fatturato: 0, budgetVend: 0, budgetInt: 0, budgetVendAnnuale: 0, ordiniAnno: 0, previsioneAnno: 0, clienti: [] };
     map[ag].acquisito += r.acquisito;
     map[ag].fatturato += r.fatturato;
     map[ag].budgetVend += r.budgetVend;
     map[ag].budgetInt += r.budgetInt;
+    map[ag].budgetVendAnnuale += r.budgetVendAnnuale || 0;
+    map[ag].ordiniAnno += r.ordiniAnno || 0;
+    map[ag].previsioneAnno += r.previsioneAnno || 0;
     map[ag].clienti.push(r);
   });
   return Object.values(map).map(a => ({
     ...a,
     scostAcqVsBudgetVend: a.acquisito - a.budgetVend,
+    pctAcqVsBudgetVend: pct(a.acquisito, a.budgetVend),
     scostAcqVsBudgetInt: a.acquisito - a.budgetInt,
+    pctAcqVsBudgetInt: pct(a.acquisito, a.budgetInt),
     scostFatVsBudgetVend: a.fatturato - a.budgetVend,
-    scostFatVsBudgetInt: a.fatturato - a.budgetInt,
+    pctFatVsBudgetVend: pct(a.fatturato, a.budgetVend),
+    pctPrevVsBudgetVendAnn: pct(a.previsioneAnno, a.budgetVendAnnuale),
   })).sort((a, b) => b.acquisito - a.acquisito);
 }
 
@@ -171,4 +227,36 @@ export function enrichOrdiniAperti(ordiniRows, customers) {
     }
   });
   return Object.values(map).sort((a, b) => b.totaleAperti - a.totaleAperti);
+}
+
+// CSV export utility
+export function exportCSV(rows, filename) {
+  const headers = ['Cliente', 'Agente', 'Acquisito', 'Fatturato', 'Bdg Vend.', 'Bdg Int.', 'Δ Acq/BV', '% Acq/BV', 'Δ Fat/BV', '% Fat/BV', 'Δ Acq/BI', '% Acq/BI', 'Prev. Anno', '% Prev/BV Ann.'];
+  const csvRows = [headers.join(';')];
+  rows.forEach(r => {
+    csvRows.push([
+      `"${(r.cliente || '').replace(/"/g, '""')}"`,
+      `"${(r.agente || '').replace(/"/g, '""')}"`,
+      r.acquisito || 0,
+      r.fatturato || 0,
+      r.budgetVend || 0,
+      r.budgetInt || 0,
+      r.scostAcqVsBudgetVend || 0,
+      r.pctAcqVsBudgetVend != null ? (r.pctAcqVsBudgetVend * 100).toFixed(1) + '%' : '',
+      r.scostFatVsBudgetVend || 0,
+      r.pctFatVsBudgetVend != null ? (r.pctFatVsBudgetVend * 100).toFixed(1) + '%' : '',
+      r.scostAcqVsBudgetInt || 0,
+      r.pctAcqVsBudgetInt != null ? (r.pctAcqVsBudgetInt * 100).toFixed(1) + '%' : '',
+      r.previsioneAnno || 0,
+      r.pctPrevVsBudgetVendAnn != null ? (r.pctPrevVsBudgetVendAnn * 100).toFixed(1) + '%' : '',
+    ].join(';'));
+  });
+  const bom = '\uFEFF';
+  const blob = new Blob([bom + csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
 }
