@@ -19,28 +19,40 @@ const TABS = [
 ];
 
 const UPLOAD_PASSWORD = import.meta.env.VITE_UPLOAD_PASSWORD || 'vendite2026';
+const AUTH_KEY = 'sales_dashboard_auth';
 
-function LoginBanner({ onUnlock }) {
+function LoginWall({ onLogin }) {
   const [pwd, setPwd] = useState('');
   const [err, setErr] = useState(false);
+
   const check = () => {
-    if (pwd === UPLOAD_PASSWORD) { onUnlock(); setErr(false); }
-    else setErr(true);
+    if (pwd === UPLOAD_PASSWORD) {
+      sessionStorage.setItem(AUTH_KEY, '1');
+      onLogin();
+    } else {
+      setErr(true);
+    }
   };
+
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 16px', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', marginBottom: 16 }}>
-      <span style={{ fontSize: 12, color: 'var(--text-secondary)', marginRight: 4 }}>Sblocca upload:</span>
-      <input
-        type="password" value={pwd} onChange={e => { setPwd(e.target.value); setErr(false); }}
-        onKeyDown={e => e.key === 'Enter' && check()}
-        placeholder="Password..."
-        style={{ fontSize: 13, padding: '5px 10px', borderRadius: 'var(--radius-sm)', border: `1px solid ${err ? 'var(--red)' : 'var(--border)'}`, outline: 'none', width: 160 }}
-      />
-      <button onClick={check} style={{ fontSize: 12, padding: '5px 14px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', background: 'var(--accent)', color: '#fff', fontWeight: 600 }}>
-        Accedi
-      </button>
-      {err && <span style={{ fontSize: 12, color: 'var(--red)' }}>Password errata</span>}
-      <span style={{ fontSize: 11, color: 'var(--text-tertiary)', marginLeft: 8 }}>Solo per il caricamento file. La dashboard è sempre visibile.</span>
+    <div style={{ minHeight: '100vh', background: 'var(--bg-page)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: '40px 48px', maxWidth: 380, width: '100%', textAlign: 'center' }}>
+        <div style={{ fontFamily: 'var(--font-serif)', fontSize: 22, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.3px', marginBottom: 4 }}>Sales Control</div>
+        <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 28 }}>Vendite vs Budget 2026</div>
+        <input
+          type="password" value={pwd}
+          onChange={e => { setPwd(e.target.value); setErr(false); }}
+          onKeyDown={e => e.key === 'Enter' && check()}
+          placeholder="Password"
+          autoFocus
+          style={{ width: '100%', fontSize: 14, padding: '10px 14px', borderRadius: 'var(--radius-md)', border: `1px solid ${err ? 'var(--red)' : 'var(--border)'}`, background: 'var(--bg-subtle)', color: 'var(--text-primary)', outline: 'none', marginBottom: 14, boxSizing: 'border-box' }}
+        />
+        <button onClick={check}
+          style={{ width: '100%', fontSize: 14, padding: '10px 0', borderRadius: 'var(--radius-md)', border: 'none', background: 'var(--accent)', color: '#fff', fontWeight: 600, cursor: 'pointer' }}>
+          Accedi
+        </button>
+        {err && <div style={{ fontSize: 12, color: 'var(--red)', marginTop: 10 }}>Password errata</div>}
+      </div>
     </div>
   );
 }
@@ -51,7 +63,7 @@ function Dashboard() {
   const [selectedMonth, setSelectedMonth] = useState(null);
   const [agentFilter, setAgentFilter] = useState('');
   const [agentViewFilter, setAgentViewFilter] = useState('');
-  const [canUpload, setCanUpload] = useState(false);
+  const [showUpload, setShowUpload] = useState(false);
 
   const targetMonth = selectedMonth !== null ? selectedMonth : lastMonth;
 
@@ -69,6 +81,11 @@ function Dashboard() {
 
   const hasSales = availableMonths.length > 0;
 
+  const handleLogout = () => {
+    sessionStorage.removeItem(AUTH_KEY);
+    window.location.reload();
+  };
+
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-page)' }}>
       {/* Header */}
@@ -81,17 +98,18 @@ function Dashboard() {
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
             {store.lastUpdated && <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>Agg. {new Date(store.lastUpdated).toLocaleDateString('it-IT')}</span>}
-            {!canUpload
-              ? <button onClick={() => setCanUpload(true)} style={{ fontSize: 12, padding: '5px 14px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)', cursor: 'pointer' }}>Carica file</button>
-              : <button onClick={() => setCanUpload(false)} style={{ fontSize: 12, padding: '5px 14px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', background: 'var(--bg-subtle)', color: 'var(--text-tertiary)', cursor: 'pointer' }}>Chiudi upload</button>
+            {!showUpload
+              ? <button onClick={() => setShowUpload(true)} style={{ fontSize: 12, padding: '5px 14px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)', cursor: 'pointer' }}>Carica file</button>
+              : <button onClick={() => setShowUpload(false)} style={{ fontSize: 12, padding: '5px 14px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', background: 'var(--bg-subtle)', color: 'var(--text-tertiary)', cursor: 'pointer' }}>Chiudi upload</button>
             }
+            <button onClick={handleLogout} style={{ fontSize: 11, padding: '5px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', background: 'none', color: 'var(--text-tertiary)', cursor: 'pointer' }}>Esci</button>
           </div>
         </div>
       </div>
 
       <div style={{ maxWidth: 1320, margin: '0 auto', padding: '20px 24px' }}>
-        {/* Upload area — shown only when unlocked */}
-        {canUpload && <PasswordGate canUpload={canUpload} setCanUpload={setCanUpload} />}
+        {/* Upload area */}
+        {showUpload && <UploadArea />}
 
         {/* Loading state */}
         {loading && !hasSales && (
@@ -199,36 +217,14 @@ function Dashboard() {
   );
 }
 
-function PasswordGate({ setCanUpload }) {
+function UploadArea() {
   const { store, resetAll } = useData();
-  const [unlocked, setUnlocked] = useState(false);
-  const [pwd, setPwd] = useState('');
-  const [err, setErr] = useState(false);
-
-  const check = () => {
-    if (pwd === UPLOAD_PASSWORD) { setUnlocked(true); setErr(false); }
-    else setErr(true);
-  };
-
   return (
     <div style={{ marginBottom: 16, background: 'var(--bg-subtle)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: '16px 20px' }}>
-      {!unlocked ? (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Password per caricare file:</span>
-          <input type="password" value={pwd} onChange={e => { setPwd(e.target.value); setErr(false); }}
-            onKeyDown={e => e.key==='Enter' && check()} placeholder="Password..."
-            style={{ fontSize: 13, padding: '6px 10px', borderRadius: 'var(--radius-sm)', border: `1px solid ${err ? 'var(--red)' : 'var(--border)'}`, outline: 'none', width: 160 }} />
-          <button onClick={check} style={{ fontSize: 12, padding: '6px 16px', borderRadius: 'var(--radius-sm)', border: 'none', background: 'var(--accent)', color: '#fff', fontWeight: 600 }}>Accedi</button>
-          {err && <span style={{ fontSize: 12, color: 'var(--red)' }}>Password errata</span>}
-        </div>
-      ) : (
-        <div>
-          <UploadPanel canUpload={true} />
-          {(store.budgetLoaded || Object.keys(store.acquisito).length>0) && (
-            <div style={{ marginTop: 8, textAlign: 'right' }}>
-              <button onClick={resetAll} style={{ fontSize: 11, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }}>Reset tutti i dati</button>
-            </div>
-          )}
+      <UploadPanel canUpload={true} />
+      {(store.budgetLoaded || Object.keys(store.acquisito).length>0) && (
+        <div style={{ marginTop: 8, textAlign: 'right' }}>
+          <button onClick={resetAll} style={{ fontSize: 11, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }}>Reset tutti i dati</button>
         </div>
       )}
     </div>
@@ -236,5 +232,9 @@ function PasswordGate({ setCanUpload }) {
 }
 
 export default function App() {
+  const [authed, setAuthed] = useState(() => sessionStorage.getItem(AUTH_KEY) === '1');
+
+  if (!authed) return <LoginWall onLogin={() => setAuthed(true)} />;
+
   return <DataProvider><Dashboard /></DataProvider>;
 }
