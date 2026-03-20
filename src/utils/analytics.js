@@ -134,6 +134,15 @@ export function computeYTDRows(store, upToMonth) {
     });
   }
 
+  // Debug: verify budget totals
+  let debugBdgVendTotal = 0;
+  store.customers.forEach(c => {
+    for (let m = 0; m <= upToMonth; m++) debugBdgVendTotal += c.budgetVenditoriMesi[m] || 0;
+  });
+  const customersWithBdg = store.customers.filter(c => c.budgetVenditoriMesi.some(v => v > 0));
+  const zeroedSeeded = store.customers.filter(c => c.isNew && c.budgetVenditoriMesi.every(v => v === 0));
+  console.log(`[computeYTDRows] ${store.customers.length} customers, ${customersWithBdg.length} with budget, ${zeroedSeeded.length} seeded (zero budget), YTD bdg vend (m0..${upToMonth}): ${debugBdgVendTotal.toFixed(2)}`);
+
   return Object.values(ytd).map(r => {
     const budget = budgetMap[r.cap];
     let budgetVend = 0, budgetInt = 0;

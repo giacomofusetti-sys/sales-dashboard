@@ -199,50 +199,49 @@ const NEW_CLIENTS_AGENTS = [
 ];
 
 export async function seedNewClientsAgents() {
-  const newClientRows = [];
-
-  for (const [ragione, agente] of NEW_CLIENTS_AGENTS) {
+  // Step 1: resolve all seed entries to their target ragione_cap
+  const entries = NEW_CLIENTS_AGENTS.map(([ragione, agente]) => {
     const resolved = resolveAlias(ragione);
-    const resolvedCap = normalizeClient(resolved);
-    const originalCap = normalizeClient(ragione);
+    return { ragione: resolved, cap: normalizeClient(resolved), agente };
+  });
 
-    if (resolvedCap !== originalCap) {
-      // Aliased client → update agent on the existing budget record (resolved name)
-      console.log(`[seed] alias: "${ragione}" → "${resolvedCap}", setting agente="${agente}"`);
-      const { error } = await supabase
-        .from('budget_customers')
-        .update({ agente, updated_at: new Date().toISOString() })
-        .eq('ragione_cap', resolvedCap);
-      if (error) console.warn(`[seed] update failed for "${resolvedCap}":`, error);
-    } else {
-      // New client → upsert full record
-      console.log(`[seed] new: "${ragione}", agente="${agente}"`);
-      newClientRows.push({
-        ragione,
-        ragione_cap: originalCap,
-        codice: '',
-        agente,
-        budget_venditori_mesi: Array(12).fill(0),
-        budget_interno_mesi: Array(12).fill(0),
-        budget_venditori_annuale: 0,
-        budget_interno_annuale: 0,
-        is_new: true,
-        updated_at: new Date().toISOString(),
-      });
-    }
+  // Step 2: update agent for ALL entries (existing budget clients + previously seeded)
+  for (const e of entries) {
+    await supabase
+      .from('budget_customers')
+      .update({ agente: e.agente, updated_at: new Date().toISOString() })
+      .eq('ragione_cap', e.cap);
   }
 
-  // Batch upsert new (non-aliased) clients
-  const BATCH = 200;
-  for (let i = 0; i < newClientRows.length; i += BATCH) {
-    const chunk = newClientRows.slice(i, i + BATCH);
-    const { error } = await supabase
-      .from('budget_customers')
-      .upsert(chunk, { onConflict: 'ragione_cap' });
+  // Step 3: find which entries don't exist in DB yet and insert them as new
+  const allCaps = entries.map(e => e.cap);
+  const { data: existing } = await supabase
+    .from('budget_customers')
+    .select('ragione_cap')
+    .in('ragione_cap', allCaps);
+  const existingSet = new Set((existing || []).map(r => r.ragione_cap));
+
+  const newRows = entries
+    .filter(e => !existingSet.has(e.cap))
+    .map(e => ({
+      ragione: e.ragione,
+      ragione_cap: e.cap,
+      codice: '',
+      agente: e.agente,
+      budget_venditori_mesi: Array(12).fill(0),
+      budget_interno_mesi: Array(12).fill(0),
+      budget_venditori_annuale: 0,
+      budget_interno_annuale: 0,
+      is_new: true,
+      updated_at: new Date().toISOString(),
+    }));
+
+  if (newRows.length) {
+    const { error } = await supabase.from('budget_customers').insert(newRows);
     if (error) throw error;
   }
 
-  console.log(`[seed] done: ${newClientRows.length} new + ${NEW_CLIENTS_AGENTS.length - newClientRows.length} aliased updated`);
+  console.log(`[seed] done: ${entries.length} agents updated, ${newRows.length} new clients inserted, ${entries.length - newRows.length} already existed`);
 }
 
 // ── Client aliases ───────────────────────────────────────────
