@@ -74,8 +74,19 @@ export function parseBudget(arrayBuffer) {
     });
   }
 
-  const totalBdgVend = customers.reduce((s, c) => s + c.budgetVenditoriAnnuale, 0);
-  console.log(`[parseBudget] parsed ${customers.length} customers, skipped ${skippedRows} rows, total bdg venditori: ${totalBdgVend.toFixed(2)}`);
+  const totalBdgVendAnn = customers.reduce((s, c) => s + c.budgetVenditoriAnnuale, 0);
+  const totalGen = customers.reduce((s, c) => s + c.budgetVenditoriMesi[0], 0);
+  const totalFeb = customers.reduce((s, c) => s + c.budgetVenditoriMesi[1], 0);
+  console.log(`[parseBudget] parsed ${customers.length} customers, skipped ${skippedRows} rows`);
+  console.log(`[parseBudget] bdg vend annuale: ${totalBdgVendAnn.toFixed(2)}, gen: ${totalGen.toFixed(2)}, feb: ${totalFeb.toFixed(2)}, gen+feb: ${(totalGen + totalFeb).toFixed(2)}`);
+
+  // Log skipped rows that have data (potential lost budget)
+  for (let i = 4; i < raw.length; i++) {
+    const row = raw[i];
+    if ((!row || !row[0]) && row && row.some(cell => cell !== null && cell !== '')) {
+      console.warn(`[parseBudget] SKIPPED row ${i} has data but empty col 0:`, row.slice(0, 8));
+    }
+  }
 
   return customers;
 }
