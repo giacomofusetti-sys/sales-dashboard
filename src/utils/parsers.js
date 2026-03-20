@@ -40,8 +40,17 @@ export function parseBudget(arrayBuffer) {
   let skippedRows = 0;
   for (let i = 4; i < raw.length; i++) {
     const row = raw[i];
-    if (!row || !row[0]) { skippedRows++; continue; }
-    const ragione = row[0].toString().trim();
+    if (!row) { skippedRows++; continue; }
+    const rawVal = row[0];
+    if (rawVal === null || rawVal === undefined || rawVal.toString().trim() === '') {
+      // Log skipped rows that have data in other columns
+      if (row.some(cell => cell !== null && cell !== undefined && cell !== '')) {
+        console.warn(`[parseBudget] SKIPPED row ${i}: col0=${JSON.stringify(rawVal)}, cols[1..5]:`, row.slice(1, 6));
+      }
+      skippedRows++;
+      continue;
+    }
+    const ragione = rawVal.toString().trim();
     if (!ragione) { skippedRows++; continue; }
 
     const budgetVenditoriMesi = [];
@@ -79,14 +88,6 @@ export function parseBudget(arrayBuffer) {
   const totalFeb = customers.reduce((s, c) => s + c.budgetVenditoriMesi[1], 0);
   console.log(`[parseBudget] parsed ${customers.length} customers, skipped ${skippedRows} rows`);
   console.log(`[parseBudget] bdg vend annuale: ${totalBdgVendAnn.toFixed(2)}, gen: ${totalGen.toFixed(2)}, feb: ${totalFeb.toFixed(2)}, gen+feb: ${(totalGen + totalFeb).toFixed(2)}`);
-
-  // Log skipped rows that have data (potential lost budget)
-  for (let i = 4; i < raw.length; i++) {
-    const row = raw[i];
-    if ((!row || !row[0]) && row && row.some(cell => cell !== null && cell !== '')) {
-      console.warn(`[parseBudget] SKIPPED row ${i} has data but empty col 0:`, row.slice(0, 8));
-    }
-  }
 
   return customers;
 }
