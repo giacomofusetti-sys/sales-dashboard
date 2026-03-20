@@ -59,8 +59,12 @@ export function computeMonthRows(store, month) {
   const fatByClient = {};
   fatRows.forEach(r => { fatByClient[r.clienteCap] = r; });
 
-  // Union of all clients appearing in either file
-  const allClientCaps = new Set([...acqRows.map(r => r.clienteCap), ...fatRows.map(r => r.clienteCap)]);
+  // Union of all clients appearing in sales OR budget
+  const allClientCaps = new Set([
+    ...acqRows.map(r => r.clienteCap),
+    ...fatRows.map(r => r.clienteCap),
+    ...store.customers.map(c => c.ragioneCap),
+  ]);
 
   // Index acquisito
   const acqByClient = {};
@@ -110,7 +114,11 @@ export function computeMonthRows(store, month) {
 export function computeYTDRows(store, upToMonth) {
   const budgetMap = buildBudgetMap(store.customers);
   const ordiniMap = computeOrdiniByClient(store);
+  // Seed ytd with all budget customers so those with zero sales are included
   const ytd = {};
+  store.customers.forEach(c => {
+    ytd[c.ragioneCap] = { cap: c.ragioneCap, label: c.ragione, acquisito: 0, fatturato: 0 };
+  });
 
   for (let m = 0; m <= upToMonth; m++) {
     const acqRows = store.acquisito[m] || [];
