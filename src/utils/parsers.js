@@ -35,8 +35,16 @@ export function parseBudget(arrayBuffer) {
     console.log(`[parseBudget] row ${r} (${row?.length || 0} cols):`, row?.slice(0, 30));
   }
 
+  const NUOVI_CLIENTI_AGENTI = {
+    'NUOVI CLIENTI BANKA': 'BANKA AGNIESZKA',
+    'NUOVI CLIENTI EXPORT': 'EXPORT SALES',
+    'NUOVI CLIENTI OLTOLINI': 'OLTOLINI MASSIMILIANO',
+    'NUOVI CLIENTI PIRAN': 'PIRAN MATTIA',
+  };
+
   // Row 3 (0-based) = headers, data starts row 4
   const customers = [];
+  const nuoviClienti = {}; // accumulate "NUOVI CLIENTI X" placeholder rows
   let skippedRows = 0;
   for (let i = 4; i < raw.length; i++) {
     const row = raw[i];
@@ -70,6 +78,28 @@ export function parseBudget(arrayBuffer) {
       console.warn(`[parseBudget] "${ragione}" has bdgVendAnn=0 but non-zero months — column mismatch?`);
     }
 
+    // "NUOVI CLIENTI X" rows: accumulate into nuoviClienti map, don't add as regular customers
+    const upperRagione = ragione.toUpperCase();
+    if (upperRagione.startsWith('NUOVI CLIENTI')) {
+      const key = normalizeClient(ragione);
+      if (!nuoviClienti[key]) {
+        nuoviClienti[key] = {
+          ragione,
+          budgetVenditoriMesi: Array(12).fill(0),
+          budgetInternoMesi: Array(12).fill(0),
+          budgetVenditoriAnnuale: 0,
+          budgetInternoAnnuale: 0,
+        };
+      }
+      for (let m = 0; m < 12; m++) {
+        nuoviClienti[key].budgetVenditoriMesi[m] += budgetVenditoriMesi[m];
+        nuoviClienti[key].budgetInternoMesi[m] += budgetInternoMesi[m];
+      }
+      nuoviClienti[key].budgetVenditoriAnnuale += budgetVendAnn;
+      nuoviClienti[key].budgetInternoAnnuale += (parseFloat(row[16]) || 0);
+      continue;
+    }
+
     customers.push({
       ragione,
       ragioneCap: normalizeClient(ragione),
@@ -83,10 +113,27 @@ export function parseBudget(arrayBuffer) {
     });
   }
 
+  // Add merged "NUOVI CLIENTI X" as special budget-only customers
+  for (const [key, nc] of Object.entries(nuoviClienti)) {
+    const agente = NUOVI_CLIENTI_AGENTI[key] || '';
+    console.log(`[parseBudget] nuovi clienti placeholder: "${nc.ragione}" → agente="${agente}", gen=${nc.budgetVenditoriMesi[0].toFixed(2)}, feb=${nc.budgetVenditoriMesi[1].toFixed(2)}`);
+    customers.push({
+      ragione: nc.ragione,
+      ragioneCap: key,
+      codice: '',
+      agente,
+      budgetVenditoriMesi: nc.budgetVenditoriMesi,
+      budgetInternoMesi: nc.budgetInternoMesi,
+      budgetVenditoriAnnuale: nc.budgetVenditoriAnnuale,
+      budgetInternoAnnuale: nc.budgetInternoAnnuale,
+      isNew: false,
+    });
+  }
+
   const totalBdgVendAnn = customers.reduce((s, c) => s + c.budgetVenditoriAnnuale, 0);
   const totalGen = customers.reduce((s, c) => s + c.budgetVenditoriMesi[0], 0);
   const totalFeb = customers.reduce((s, c) => s + c.budgetVenditoriMesi[1], 0);
-  console.log(`[parseBudget] parsed ${customers.length} customers, skipped ${skippedRows} rows`);
+  console.log(`[parseBudget] parsed ${customers.length} customers (${Object.keys(nuoviClienti).length} nuovi clienti placeholders merged), skipped ${skippedRows} rows`);
   console.log(`[parseBudget] bdg vend annuale: ${totalBdgVendAnn.toFixed(2)}, gen: ${totalGen.toFixed(2)}, feb: ${totalFeb.toFixed(2)}, gen+feb: ${(totalGen + totalFeb).toFixed(2)}`);
 
   return customers;
