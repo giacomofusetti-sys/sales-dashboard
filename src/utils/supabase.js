@@ -76,10 +76,18 @@ export async function loadAcquisitoDB() {
       qtaAct: r.qta_act,
     });
   });
+  const months = Object.keys(grouped).sort();
+  console.log(`[loadAcquisitoDB] ${data.length} rows, months: [${months.join(', ')}]`);
+  months.forEach(m => {
+    const total = grouped[m].reduce((s, r) => s + r.valore, 0);
+    console.log(`[loadAcquisitoDB] month ${m}: ${grouped[m].length} clients, total: ${total.toFixed(2)}`);
+  });
   return grouped;
 }
 
 export async function saveAcquisito(monthIdx, rows) {
+  const total = rows.reduce((s, r) => s + r.valore, 0);
+  console.log(`[saveAcquisito] month ${monthIdx}: ${rows.length} rows, total: ${total.toFixed(2)}`);
   // Delete existing for this month, then insert
   await supabase.from('monthly_acquisito').delete().eq('month_idx', monthIdx);
   const dbRows = rows.map(r => ({
@@ -111,10 +119,18 @@ export async function loadFatturatoDB() {
       qtaAct: r.qta_act,
     });
   });
+  const fMonths = Object.keys(grouped).sort();
+  console.log(`[loadFatturatoDB] ${data.length} rows, months: [${fMonths.join(', ')}]`);
+  fMonths.forEach(m => {
+    const total = grouped[m].reduce((s, r) => s + r.valore, 0);
+    console.log(`[loadFatturatoDB] month ${m}: ${grouped[m].length} clients, total: ${total.toFixed(2)}`);
+  });
   return grouped;
 }
 
 export async function saveFatturato(monthIdx, rows) {
+  const total = rows.reduce((s, r) => s + r.valore, 0);
+  console.log(`[saveFatturato] month ${monthIdx}: ${rows.length} rows, total: ${total.toFixed(2)}`);
   await supabase.from('monthly_fatturato').delete().eq('month_idx', monthIdx);
   const dbRows = rows.map(r => ({
     month_idx: monthIdx,
