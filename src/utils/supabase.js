@@ -20,9 +20,21 @@ export async function loadBudgetFromDB() {
 export async function saveBudgetToDB(customers) {
   const rows = customers.map(customerToDB);
 
-  // Deduplicate by ragione_cap (keep last occurrence)
+  // Deduplicate by ragione_cap — keep the one with highest budget
   const unique = new Map();
-  rows.forEach(r => unique.set(r.ragione_cap, r));
+  rows.forEach(r => {
+    const existing = unique.get(r.ragione_cap);
+    if (existing) {
+      const existingBdg = (existing.budget_venditori_mesi || []).reduce((s, v) => s + (v || 0), 0);
+      const newBdg = (r.budget_venditori_mesi || []).reduce((s, v) => s + (v || 0), 0);
+      console.warn(`[saveBudgetToDB] DUPLICATE "${r.ragione_cap}": existing bdg=${existingBdg.toFixed(2)}, new bdg=${newBdg.toFixed(2)}, keeping ${newBdg >= existingBdg ? 'new' : 'existing'}`);
+      if (newBdg >= existingBdg) {
+        unique.set(r.ragione_cap, r);
+      }
+    } else {
+      unique.set(r.ragione_cap, r);
+    }
+  });
   const deduped = [...unique.values()];
 
   // Upsert in batches of 200
