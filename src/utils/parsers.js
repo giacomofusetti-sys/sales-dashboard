@@ -28,19 +28,37 @@ export function parseBudget(arrayBuffer) {
   const ws = wb.Sheets[wb.SheetNames[0]];
   const raw = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
 
+  // Debug: dump first 6 rows to understand structure
+  console.log(`[parseBudget] total raw rows: ${raw.length}`);
+  for (let r = 0; r < Math.min(6, raw.length); r++) {
+    const row = raw[r];
+    console.log(`[parseBudget] row ${r} (${row?.length || 0} cols):`, row?.slice(0, 30));
+  }
+
   // Row 3 (0-based) = headers, data starts row 4
   const customers = [];
+  let skippedRows = 0;
   for (let i = 4; i < raw.length; i++) {
     const row = raw[i];
-    if (!row || !row[0]) continue;
+    if (!row || !row[0]) { skippedRows++; continue; }
     const ragione = row[0].toString().trim();
-    if (!ragione) continue;
+    if (!ragione) { skippedRows++; continue; }
 
     const budgetVenditoriMesi = [];
     const budgetInternoMesi = [];
     for (let m = 0; m < 12; m++) {
       budgetVenditoriMesi.push(parseFloat(row[4 + m]) || 0);
       budgetInternoMesi.push(parseFloat(row[17 + m]) || 0);
+    }
+
+    const budgetVendAnn = parseFloat(row[3]) || 0;
+
+    // Debug: log first 5 customers and any with budget = 0
+    if (customers.length < 5) {
+      console.log(`[parseBudget] #${customers.length} "${ragione}" agente="${row[2]}" bdgVendAnn=${budgetVendAnn} gen=${budgetVenditoriMesi[0]} feb=${budgetVenditoriMesi[1]} | raw cols[1..5]:`, row.slice(1, 6));
+    }
+    if (budgetVendAnn === 0 && budgetVenditoriMesi.some(v => v > 0)) {
+      console.warn(`[parseBudget] "${ragione}" has bdgVendAnn=0 but non-zero months — column mismatch?`);
     }
 
     customers.push({
@@ -50,11 +68,15 @@ export function parseBudget(arrayBuffer) {
       agente: row[2]?.toString().trim().toUpperCase() || '',
       budgetVenditoriMesi,
       budgetInternoMesi,
-      budgetVenditoriAnnuale: parseFloat(row[3]) || 0,
+      budgetVenditoriAnnuale: budgetVendAnn,
       budgetInternoAnnuale: parseFloat(row[16]) || 0,
       isNew: false,
     });
   }
+
+  const totalBdgVend = customers.reduce((s, c) => s + c.budgetVenditoriAnnuale, 0);
+  console.log(`[parseBudget] parsed ${customers.length} customers, skipped ${skippedRows} rows, total bdg venditori: ${totalBdgVend.toFixed(2)}`);
+
   return customers;
 }
 
