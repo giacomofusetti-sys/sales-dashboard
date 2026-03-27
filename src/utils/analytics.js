@@ -252,30 +252,25 @@ export function enrichOrdiniAperti(ordiniRows, customers) {
   return Object.values(map).sort((a, b) => b.totaleAperti - a.totaleAperti);
 }
 
-// CSV export utility
-export function exportCSV(rows, filename) {
-  const headers = ['Cliente', 'Agente', 'Acquisito', 'Fatturato', 'Bdg Vend.', 'Bdg Int.', 'Δ Acq/BV', '% Acq/BV', 'Δ Fat/BV', '% Fat/BV', 'Δ Acq/BI', '% Acq/BI', 'Prev. Anno', '% Prev/BV Ann.'];
-  const csvRows = [headers.join(';')];
-  rows.forEach(r => {
-    csvRows.push([
-      `"${(r.cliente || '').replace(/"/g, '""')}"`,
-      `"${(r.agente || '').replace(/"/g, '""')}"`,
-      r.acquisito || 0,
-      r.fatturato || 0,
-      r.budgetVend || 0,
-      r.budgetInt || 0,
-      r.scostAcqVsBudgetVend || 0,
-      r.pctAcqVsBudgetVend != null ? (r.pctAcqVsBudgetVend * 100).toFixed(1) + '%' : '',
-      r.scostFatVsBudgetVend || 0,
-      r.pctFatVsBudgetVend != null ? (r.pctFatVsBudgetVend * 100).toFixed(1) + '%' : '',
-      r.scostAcqVsBudgetInt || 0,
-      r.pctAcqVsBudgetInt != null ? (r.pctAcqVsBudgetInt * 100).toFixed(1) + '%' : '',
-      r.previsioneAnno || 0,
-      r.pctPrevVsBudgetVendAnn != null ? (r.pctPrevVsBudgetVendAnn * 100).toFixed(1) + '%' : '',
-    ].join(';'));
-  });
-  const bom = '\uFEFF';
-  const blob = new Blob([bom + csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+// XLSX export utilities
+import * as XLSX from 'xlsx';
+
+function xlNum(v) { return Math.round((v || 0) * 100) / 100; }
+function xlPct(v) {
+  if (v == null) return '';
+  const n = (v * 100);
+  return (n >= 0 ? '+' : '') + n.toFixed(1) + '%';
+}
+function xlDelta(v) {
+  const n = xlNum(v);
+  return n > 0 ? '+' + n.toFixed(2) : n.toFixed(2);
+}
+
+function downloadXlsx(ws, filename) {
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Dati');
+  const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+  const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -284,33 +279,65 @@ export function exportCSV(rows, filename) {
   URL.revokeObjectURL(url);
 }
 
-export function exportAgentsSummaryCSV(agentRows, filename) {
-  const headers = ['Agente', 'Acquisito', 'Fatturato', 'Bdg Vend.', 'Bdg Int.', 'Δ Acq/BV', '% Acq/BV', 'Δ Fat/BV', '% Fat/BV', 'Δ Acq/BI', '% Acq/BI', 'Prev. Anno', '% Prev/BV Ann.', 'N. Clienti'];
-  const csvRows = [headers.join(';')];
-  agentRows.forEach(a => {
-    csvRows.push([
-      `"${(a.agente || '').replace(/"/g, '""')}"`,
-      a.acquisito || 0,
-      a.fatturato || 0,
-      a.budgetVend || 0,
-      a.budgetInt || 0,
-      a.scostAcqVsBudgetVend || 0,
-      a.pctAcqVsBudgetVend != null ? (a.pctAcqVsBudgetVend * 100).toFixed(1) + '%' : '',
-      a.scostFatVsBudgetVend || 0,
-      a.pctFatVsBudgetVend != null ? (a.pctFatVsBudgetVend * 100).toFixed(1) + '%' : '',
-      a.scostAcqVsBudgetInt || 0,
-      a.pctAcqVsBudgetInt != null ? (a.pctAcqVsBudgetInt * 100).toFixed(1) + '%' : '',
-      a.previsioneAnno || 0,
-      a.pctPrevVsBudgetVendAnn != null ? (a.pctPrevVsBudgetVendAnn * 100).toFixed(1) + '%' : '',
-      a.clienti?.length || 0,
-    ].join(';'));
+export function exportXLSX(rows, filename) {
+  const headers = ['Cliente', 'Agente', 'Acquisito', 'Fatturato', 'Bdg Vend.', 'Bdg Int.', 'Δ Acq/BV', '% Acq/BV', 'Δ Fat/BV', '% Fat/BV', 'Δ Acq/BI', '% Acq/BI', 'Prev. Anno', '% Prev/BV Ann.'];
+  const data = rows.map(r => [
+    r.cliente || '',
+    r.agente || '',
+    xlNum(r.acquisito),
+    xlNum(r.fatturato),
+    xlNum(r.budgetVend),
+    xlNum(r.budgetInt),
+    xlDelta(r.scostAcqVsBudgetVend),
+    xlPct(r.pctAcqVsBudgetVend),
+    xlDelta(r.scostFatVsBudgetVend),
+    xlPct(r.pctFatVsBudgetVend),
+    xlDelta(r.scostAcqVsBudgetInt),
+    xlPct(r.pctAcqVsBudgetInt),
+    xlNum(r.previsioneAnno),
+    xlPct(r.pctPrevVsBudgetVendAnn),
+  ]);
+  const ws = XLSX.utils.aoa_to_sheet([headers, ...data]);
+  // Bold headers
+  headers.forEach((_, i) => {
+    const cell = ws[XLSX.utils.encode_cell({ r: 0, c: i })];
+    if (cell) cell.s = { font: { bold: true } };
   });
-  const bom = '\uFEFF';
-  const blob = new Blob([bom + csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const el = document.createElement('a');
-  el.href = url;
-  el.download = filename;
-  el.click();
-  URL.revokeObjectURL(url);
+  downloadXlsx(ws, filename);
+}
+
+export function exportAgentsSummaryXLSX(agentRows, filename) {
+  const headers = ['Agente', 'Acquisito', 'Fatturato', 'Bdg Vend.', 'Bdg Int.', 'Δ Acq/BV', '% Acq/BV', 'Δ Fat/BV', '% Fat/BV', 'Δ Acq/BI', '% Acq/BI', 'Prev. Anno', '% Prev/BV Ann.', 'N. Clienti'];
+  const data = agentRows.map(a => [
+    a.agente || '',
+    xlNum(a.acquisito),
+    xlNum(a.fatturato),
+    xlNum(a.budgetVend),
+    xlNum(a.budgetInt),
+    xlDelta(a.scostAcqVsBudgetVend),
+    xlPct(a.pctAcqVsBudgetVend),
+    xlDelta(a.scostFatVsBudgetVend),
+    xlPct(a.pctFatVsBudgetVend),
+    xlDelta(a.scostAcqVsBudgetInt),
+    xlPct(a.pctAcqVsBudgetInt),
+    xlNum(a.previsioneAnno),
+    xlPct(a.pctPrevVsBudgetVendAnn),
+    a.clienti?.length || 0,
+  ]);
+  // Totale row
+  const totale = ['TOTALE',
+    xlNum(agentRows.reduce((s, a) => s + (a.acquisito || 0), 0)),
+    xlNum(agentRows.reduce((s, a) => s + (a.fatturato || 0), 0)),
+    xlNum(agentRows.reduce((s, a) => s + (a.budgetVend || 0), 0)),
+    xlNum(agentRows.reduce((s, a) => s + (a.budgetInt || 0), 0)),
+    '', '', '', '', '', '', '',  '',
+    agentRows.reduce((s, a) => s + (a.clienti?.length || 0), 0),
+  ];
+  const ws = XLSX.utils.aoa_to_sheet([headers, ...data, totale]);
+  // Bold headers
+  headers.forEach((_, i) => {
+    const cell = ws[XLSX.utils.encode_cell({ r: 0, c: i })];
+    if (cell) cell.s = { font: { bold: true } };
+  });
+  downloadXlsx(ws, filename);
 }

@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { DataProvider, useData } from './hooks/useData';
-import { computeMonthRows, computeYTDRows, groupByAgent, computeTrend, enrichOrdiniAperti, exportCSV, exportAgentsSummaryCSV } from './utils/analytics';
+import { computeMonthRows, computeYTDRows, groupByAgent, computeTrend, enrichOrdiniAperti, exportXLSX, exportAgentsSummaryXLSX } from './utils/analytics';
 import { MONTH_LABELS } from './utils/parsers';
 import UploadPanel from './components/UploadPanel';
 import KpiBar from './components/KpiBar';
@@ -192,8 +192,8 @@ function Dashboard() {
               )}
               {tab==='agenti' && <AgentView agentRows={agentRows} agentFilter={agentViewFilter} onAgentFilterChange={setAgentViewFilter} onExportCSV={() => {
                 const agent = agentRows.find(a => a.agente === agentViewFilter);
-                if (agent) exportCSV(agent.clienti, `${agentViewFilter.replace(/\s+/g, '_')}_clienti.csv`);
-              }} onExportAllAgents={() => exportAgentsSummaryCSV(agentRows, 'riepilogo_agenti.csv')} />}
+                if (agent) exportXLSX(agent.clienti, `${agentViewFilter.replace(/\s+/g, '_')}_clienti.xlsx`);
+              }} onExportAllAgents={() => exportAgentsSummaryXLSX(agentRows, 'tutti_agenti.xlsx')} />}
               {tab==='trend' && (
                 <div>
                   <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.7px', color: 'var(--text-tertiary)', marginBottom: 16 }}>Andamento mensile — Gen → {MONTH_LABELS[lastMonth]}</div>

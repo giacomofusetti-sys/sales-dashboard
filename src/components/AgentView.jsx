@@ -91,7 +91,7 @@ export default function AgentView({ agentRows, agentFilter, onAgentFilterChange,
         {agentFilter && (
           <button onClick={onExportCSV}
             style={{ fontSize: 12, padding: '6px 14px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)', cursor: 'pointer', fontWeight: 600 }}>
-            Esporta CSV
+            Esporta XLSX
           </button>
         )}
         <button onClick={onExportAllAgents}
