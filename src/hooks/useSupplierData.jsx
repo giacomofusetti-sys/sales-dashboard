@@ -26,35 +26,54 @@ export function SupplierDataProvider({ children }) {
   useEffect(() => {
     (async () => {
       try {
+        console.log('[SupplierData] starting initial load...');
         const types = ['OV', 'OA', 'OP', 'OL', 'ACCIAIERIA'];
         const allOrders = {};
         const allMats = {};
         const allRefs = {};
 
         for (const t of types) {
-          const ords = await loadSupplierOrders(t);
-          allOrders[t] = ords;
+          try {
+            const ords = await loadSupplierOrders(t);
+            allOrders[t] = ords;
 
-          if (ords.length) {
-            const mats = await loadOrderMaterials(ords.map(o => o.id));
-            for (const m of mats) {
-              if (!allMats[m.order_id]) allMats[m.order_id] = [];
-              allMats[m.order_id].push(m);
-            }
+            if (ords.length) {
+              const mats = await loadOrderMaterials(ords.map(o => o.id));
+              for (const m of mats) {
+                if (!allMats[m.order_id]) allMats[m.order_id] = [];
+                allMats[m.order_id].push(m);
+              }
 
-            const matIds = mats.map(m => m.id);
-            if (matIds.length) {
-              const r = await loadMaterialRefs(matIds);
-              for (const ref of r) {
-                if (!allRefs[ref.material_id]) allRefs[ref.material_id] = [];
-                allRefs[ref.material_id].push(ref);
+              const matIds = mats.map(m => m.id);
+              if (matIds.length) {
+                const r = await loadMaterialRefs(matIds);
+                for (const ref of r) {
+                  if (!allRefs[ref.material_id]) allRefs[ref.material_id] = [];
+                  allRefs[ref.material_id].push(ref);
+                }
               }
             }
+          } catch (err) {
+            console.error(`[SupplierData] error loading type ${t}:`, err);
+            allOrders[t] = [];
           }
         }
 
-        const allNotes = await loadOrderNotes();
-        const dl = await loadUpcomingDeadlines(30);
+        let allNotes = [];
+        try {
+          allNotes = await loadOrderNotes();
+        } catch (err) {
+          console.error('[SupplierData] error loading notes:', err);
+        }
+
+        let dl = [];
+        try {
+          dl = await loadUpcomingDeadlines(30);
+        } catch (err) {
+          console.error('[SupplierData] error loading deadlines:', err);
+        }
+
+        console.log('[SupplierData] load complete:', Object.entries(allOrders).map(([k, v]) => `${k}=${v.length}`).join(', '));
 
         setOrders(allOrders);
         setMaterials(allMats);
@@ -73,10 +92,13 @@ export function SupplierDataProvider({ children }) {
   const importData = useCallback(async (orderType, parsedOrders) => {
     setImporting(true);
     try {
+      console.log(`[importData] importing ${parsedOrders.length} orders as type="${orderType}"`);
       const result = await importParsedOrders(orderType, parsedOrders);
+      console.log(`[importData] import done:`, result);
 
       // Reload affected type
       const ords = await loadSupplierOrders(orderType);
+      console.log(`[importData] reload ${orderType}: ${ords.length} orders`);
       setOrders(prev => ({ ...prev, [orderType]: ords }));
 
       // Reload materials for this type

@@ -51,8 +51,11 @@ export default function SupplierUpload() {
           continue;
         }
 
+        console.log(`[SupplierUpload] file="${file.name}" detected type="${type}", first 5 lines:`, lines.slice(0, 5));
+
         // Parse
         const parsed = parseByType(lines, type);
+        console.log(`[SupplierUpload] parsed ${parsed.length} orders, first orderRef:`, parsed[0]?.orderRef);
         const totalMats = parsed.reduce((s, o) => s + (o.materials?.length || 0), 0);
         const totalRefs = parsed.reduce((s, o) => s + o.materials?.reduce((s2, m) => s2 + (m.refs?.length || 0), 0) || 0, 0);
 

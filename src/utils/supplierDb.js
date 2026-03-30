@@ -6,6 +6,7 @@ export async function loadSupplierOrders(orderType) {
   if (orderType) query = query.eq('order_type', orderType);
   query = query.order('order_ref');
   const { data, error } = await query;
+  console.log(`[loadSupplierOrders] type=${orderType}, rows=${data?.length ?? 'null'}, error=${error?.message ?? 'none'}`);
   if (error) throw error;
   return data;
 }
@@ -33,6 +34,7 @@ export async function loadUpcomingDeadlines(withinDays = 30) {
     .select('*, supplier_orders!inner(order_type, order_ref, client_name, supplier_name)')
     .or(`scadenza_effettiva.lte.${cutoffStr},and(scadenza_effettiva.is.null,scadenza.lte.${cutoffStr})`)
     .order('scadenza');
+  console.log(`[loadUpcomingDeadlines] cutoff=${cutoffStr}, rows=${data?.length ?? 'null'}, error=${error?.message ?? 'none'}`);
   if (error) throw error;
   return data;
 }
