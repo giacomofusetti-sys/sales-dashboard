@@ -33,25 +33,15 @@ export default function SupplierUpload() {
           continue;
         }
 
-        // Detect type
-        let type = detectPdfType(lines);
-
-        // Fallback: detect from filename
-        if (!type) {
-          const fname = file.name.toLowerCase();
-          if (fname.includes('acciaieria')) type = 'ACCIAIERIA';
-          else if (fname.includes('_ol')) type = 'OL';
-          else if (fname.includes('_op') || fname.includes('op_')) type = 'OP';
-          else if (fname.includes('_oa') || fname.includes('oa_')) type = 'OA';
-          else if (fname.includes('ov') || fname.includes('cliente')) type = 'OV';
-        }
+        // Detect type (filename + content)
+        let type = detectPdfType(lines, file.name);
 
         if (!type) {
           newResults.push({ file: file.name, error: 'Tipo PDF non riconosciuto. Usa uno dei file standard di Embyon.' });
           continue;
         }
 
-        console.log(`[SupplierUpload] file="${file.name}" detected type="${type}", first 5 lines:`, lines.slice(0, 5));
+        console.log(`[SupplierUpload] file="${file.name}" detected type="${type}", first 20 lines:`, lines.slice(0, 20));
 
         // Parse
         const parsed = parseByType(lines, type);

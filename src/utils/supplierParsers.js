@@ -343,25 +343,41 @@ export function parseOL(lines) {
 
 // ── Auto-detect PDF type from title line ─────────────────────
 
-export function detectPdfType(lines) {
-  const first50 = lines.slice(0, 50);
+export function detectPdfType(lines, filename) {
+  const fname = (filename || '').toLowerCase();
 
-  // Acciaieria check first — these PDFs use OA/ headers but must be typed ACCIAIERIA
-  if (first50.some(l => /acciaieria/i.test(l))) return 'ACCIAIERIA';
+  // 1. Filename is the most reliable source — titles are ambiguous across types
+  if (fname.includes('acciaieria')) return 'ACCIAIERIA';
+  if (fname.includes('_ol') || fname.includes('ol_')) return 'OL';
+  if (fname.includes('_op') || fname.includes('op_')) return 'OP';
 
+  // 2. Content-based detection for OV vs OA (these have distinct titles)
   for (const line of lines.slice(0, 10)) {
     if (/Lista ordini OV in scadenza/i.test(line)) return 'OV';
-    if (/Lista ordini OA in scadenza/i.test(line)) return 'OA';
-    if (/Lista ordini OP in scadenza/i.test(line) || /\*?OP\/\d{4}\/\d{7}/.test(line)) return 'OP';
     if (/Lista ordini OL in scadenza/i.test(line)) return 'OL';
   }
-  // Fallback: check first order header
+
+  // 3. For "Lista ordini OA in scadenza" — check if it's actually OP (headers start with *OP/)
+  const first50 = lines.slice(0, 50);
+  if (first50.some(l => /^\*?OP\/\d{4}\/\d{7}/.test(l))) return 'OP';
+
+  // 4. Title says OA and no OP headers found → genuine OA
+  for (const line of lines.slice(0, 10)) {
+    if (/Lista ordini OA in scadenza/i.test(line)) return 'OA';
+  }
+
+  // 5. Fallback: check first order header
   for (const line of first50) {
     if (/^OV\//.test(line)) return 'OV';
-    if (/^OA\//.test(line)) return 'OA';
     if (/^\*?OP\//.test(line)) return 'OP';
     if (/^OL\//.test(line)) return 'OL';
+    if (/^OA\//.test(line)) return 'OA';
   }
+
+  // 6. Last resort: filename patterns
+  if (fname.includes('oa')) return 'OA';
+  if (fname.includes('ov') || fname.includes('cliente')) return 'OV';
+
   return null;
 }
 
