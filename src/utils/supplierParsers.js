@@ -229,42 +229,90 @@ export function parseOAOP(lines, forceType) {
 
 // ── OL Parser ─────────────────────────────────────────────────
 
-const OL_HEADER_RE = /^(OL\/\d{4}\/\d{7})\s+(\d{2}\/\d{2}\/\d{2})\s+F\s+(\d+)\s+(.*)/;
+// Single-line header (pdfplumber): "OL/2026/0000945 23/02/26 F 2411 ALFA OSSIDAZIONE..."
+const OL_HEADER_SINGLE_RE = /^(OL\/\d{4}\/\d{7})\s+(\d{2}\/\d{2}\/\d{2})\s+F\s+(\d+)\s+(.*)/;
+// Split header (pdfjs) — ref on its own line
+const OL_REF_ONLY_RE = /^(OL\/\d{4}\/\d{7})\s*$/;
+// Split header (pdfjs) — date+supplier on separate line
+const OL_SUPPLIER_RE = /^(\d{2}\/\d{2}\/\d{2})\s+F\s+(\d+)\s+(.*)/;
 const OL_POS_RE = /^Pos\.\s+(\d+)\s+(\d{2}\/\d{2}\/\d{2})\s+(\S+)\s+(.*)/;
 const OL_MATERIAL_RE = /^([A-Z0-9]{1,5}#[A-Z0-9]+)\s+(.*)/;
 const OL_REF_RE = /^(OV|OL|BPV)[.\s]\d{4}[.\s]\d+\s+(.+?)\s+(\d{2}\/\d{2}\/\d{2})\s+([\d.,]+)/;
+
+function buildOlOrder(orderRef, dateStr, supplierCode, rest) {
+  const order = {
+    orderRef,
+    orderDate: parseDateDDMMYY(dateStr),
+    supplierCode,
+    supplierName: '',
+    supplierPhone: '',
+    rawHeader: `${orderRef} ${dateStr} F ${supplierCode} ${rest}`,
+    materials: [],
+  };
+  const phoneMatch = rest.match(/\s+([\d\s/+()-]{6,})$/);
+  if (phoneMatch) {
+    order.supplierName = rest.slice(0, rest.length - phoneMatch[0].length).trim();
+    order.supplierPhone = phoneMatch[1].trim();
+  } else {
+    order.supplierName = rest.trim();
+  }
+  return order;
+}
 
 export function parseOL(lines) {
   const orders = [];
   let current = null;
   let currentMat = null;
+  let pendingRef = null;       // OL ref waiting for its supplier line
+  let pendingSupplier = null;  // supplier line waiting for its OL ref
 
   for (const line of lines) {
-    // Order header
-    const hm = line.match(OL_HEADER_RE);
+    // Single-line header (pdfplumber format)
+    const hm = line.match(OL_HEADER_SINGLE_RE);
     if (hm) {
+      pendingRef = null;
+      pendingSupplier = null;
       if (current) orders.push(current);
-      current = {
-        orderRef: hm[1],
-        orderDate: parseDateDDMMYY(hm[2]),
-        supplierCode: hm[3],
-        supplierName: '',
-        supplierPhone: '',
-        rawHeader: line,
-        materials: [],
-      };
+      current = buildOlOrder(hm[1], hm[2], hm[3], hm[4]);
       currentMat = null;
+      continue;
+    }
 
-      const rest = hm[4].trim();
-      const phoneMatch = rest.match(/\s+([\d\s/+()-]{6,})$/);
-      if (phoneMatch) {
-        current.supplierName = rest.slice(0, rest.length - phoneMatch[0].length).trim();
-        current.supplierPhone = phoneMatch[1].trim();
+    // Split header: ref-only line "OL/2026/0000945"
+    const rm = line.match(OL_REF_ONLY_RE);
+    if (rm) {
+      if (pendingSupplier) {
+        // Supplier line came first → combine
+        if (current) orders.push(current);
+        current = buildOlOrder(rm[1], pendingSupplier.date, pendingSupplier.code, pendingSupplier.rest);
+        currentMat = null;
+        pendingSupplier = null;
+        pendingRef = null;
       } else {
-        current.supplierName = rest;
+        pendingRef = rm[1];
       }
       continue;
     }
+
+    // Split header: supplier line "23/02/26  F 2411  ALFA OSSIDAZIONE..."
+    const sm = line.match(OL_SUPPLIER_RE);
+    if (sm) {
+      if (pendingRef) {
+        // Ref line came first → combine
+        if (current) orders.push(current);
+        current = buildOlOrder(pendingRef, sm[1], sm[2], sm[3]);
+        currentMat = null;
+        pendingRef = null;
+        pendingSupplier = null;
+      } else {
+        pendingSupplier = { date: sm[1], code: sm[2], rest: sm[3] };
+      }
+      continue;
+    }
+
+    // Any other line clears pending state
+    pendingRef = null;
+    pendingSupplier = null;
 
     if (!current) continue;
 
@@ -308,14 +356,12 @@ export function parseOL(lines) {
     // Material line before positions (material to receive)
     const matLine = line.match(OL_MATERIAL_RE);
     if (matLine && !currentMat) {
-      // This is a material-to-receive line; create a material entry without pos
       currentMat = {
         pos: null,
         codiceProdotto: matLine[1],
         descrizione: matLine[2].trim(),
         refs: [],
       };
-      // Extract qty if present at end
       const qtyMatch = matLine[2].match(/([\d.,]+)\s*$/);
       if (qtyMatch) {
         currentMat.qtyInviata = parseItalianNumber(qtyMatch[1]);
@@ -326,13 +372,13 @@ export function parseOL(lines) {
     }
 
     // Reference line
-    const rm = line.match(OL_REF_RE);
-    if (rm && currentMat) {
+    const refm = line.match(OL_REF_RE);
+    if (refm && currentMat) {
       currentMat.refs.push({
-        refType: rm[1],
-        refName: rm[2].trim(),
-        refDate: parseDateDDMMYY(rm[3]),
-        refQty: parseItalianNumber(rm[4]),
+        refType: refm[1],
+        refName: refm[2].trim(),
+        refDate: parseDateDDMMYY(refm[3]),
+        refQty: parseItalianNumber(refm[4]),
       });
     }
   }
