@@ -23,19 +23,33 @@ export async function loadOrderMaterials(orderIds) {
   return data;
 }
 
-// ── Load all materials with upcoming deadlines ───────────────
+// ── Load materials with deadlines in a relevant window ───────
+// Floor (90 days ago) avoids pulling ancient overdue items;
+// Cutoff (withinDays ahead) caps the future window.
+// PostgREST max_rows is 1000 server-side — .limit() can't exceed it.
 export async function loadUpcomingDeadlines(withinDays = 30) {
-  const cutoff = new Date();
+  const today = new Date();
+  const floor = new Date(today);
+  floor.setDate(floor.getDate() - 90);
+  const floorStr = floor.toISOString().split('T')[0];
+
+  const cutoff = new Date(today);
   cutoff.setDate(cutoff.getDate() + withinDays);
   const cutoffStr = cutoff.toISOString().split('T')[0];
 
+  // effective_date = COALESCE(scadenza_effettiva, scadenza)
+  // WHERE scadenza IS NOT NULL
+  //   AND effective_date >= floor AND effective_date <= cutoff
   const { data, error } = await supabase
     .from('order_materials')
     .select('*, supplier_orders!inner(order_type, order_ref, client_name, supplier_name)')
-    .or(`scadenza_effettiva.lte.${cutoffStr},and(scadenza_effettiva.is.null,scadenza.lte.${cutoffStr})`)
-    .order('scadenza')
-    .limit(10000);
-  console.log(`[loadUpcomingDeadlines] cutoff=${cutoffStr}, rows=${data?.length ?? 'null'}, error=${error?.message ?? 'none'}`);
+    .not('scadenza', 'is', null)
+    .or(
+      `and(scadenza_effettiva.not.is.null,scadenza_effettiva.gte.${floorStr},scadenza_effettiva.lte.${cutoffStr}),` +
+      `and(scadenza_effettiva.is.null,scadenza.gte.${floorStr},scadenza.lte.${cutoffStr})`
+    )
+    .order('scadenza');
+  console.log(`[loadUpcomingDeadlines] floor=${floorStr}, cutoff=${cutoffStr}, rows=${data?.length ?? 'null'}, error=${error?.message ?? 'none'}`);
   if (error) throw error;
   return data;
 }
