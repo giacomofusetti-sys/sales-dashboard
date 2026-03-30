@@ -33,21 +33,38 @@ export async function loadUpcomingDeadlines(withinDays = 30) {
     .from('order_materials')
     .select('*, supplier_orders!inner(order_type, order_ref, client_name, supplier_name)')
     .or(`scadenza_effettiva.lte.${cutoffStr},and(scadenza_effettiva.is.null,scadenza.lte.${cutoffStr})`)
-    .order('scadenza');
+    .order('scadenza')
+    .limit(10000);
   console.log(`[loadUpcomingDeadlines] cutoff=${cutoffStr}, rows=${data?.length ?? 'null'}, error=${error?.message ?? 'none'}`);
   if (error) throw error;
   return data;
 }
 
-// ── Load refs for materials ──────────────────────────────────
-export async function loadMaterialRefs(materialIds) {
-  if (!materialIds.length) return [];
+// ── Load refs for a single order's materials ────────────────
+export async function loadRefsForOrder(orderId) {
+  // Step 1: get material IDs for this order
+  const { data: mats, error: matErr } = await supabase
+    .from('order_materials')
+    .select('id')
+    .eq('order_id', orderId);
+  if (matErr) throw matErr;
+  if (!mats?.length) return {};
+
+  // Step 2: load refs for those materials (small set per single order)
+  const matIds = mats.map(m => m.id);
   const { data, error } = await supabase
     .from('material_refs')
     .select('*')
-    .in('material_id', materialIds);
+    .in('material_id', matIds);
   if (error) throw error;
-  return data;
+
+  // Group by material_id
+  const grouped = {};
+  for (const ref of data) {
+    if (!grouped[ref.material_id]) grouped[ref.material_id] = [];
+    grouped[ref.material_id].push(ref);
+  }
+  return grouped;
 }
 
 // ── Load notes ───────────────────────────────────────────────

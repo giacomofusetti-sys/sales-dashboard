@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 import { useSupplierData } from '../../hooks/useSupplierData';
 
 export default function OrderList({ orderType }) {
-  const { orders, materials, refs, notes, upsertNote, deleteNote, updateDeadline } = useSupplierData();
+  const { orders, materials, refs, notes, fetchRefs, upsertNote, deleteNote, updateDeadline } = useSupplierData();
   const [search, setSearch] = useState('');
   const [expandedOrder, setExpandedOrder] = useState(null);
   const [editingNote, setEditingNote] = useState(null);  // { orderRef, codiceProdotto, text, id }
@@ -82,7 +82,7 @@ export default function OrderList({ orderType }) {
             <div key={order.id} style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
               {/* Order header */}
               <button
-                onClick={() => setExpandedOrder(isExpanded ? null : order.id)}
+                onClick={() => { if (!isExpanded) fetchRefs(order.id); setExpandedOrder(isExpanded ? null : order.id); }}
                 style={{
                   width: '100%', display: 'flex', alignItems: 'center', gap: 12,
                   padding: '10px 14px', border: 'none', background: isExpanded ? 'var(--bg-subtle)' : 'var(--bg-card)',

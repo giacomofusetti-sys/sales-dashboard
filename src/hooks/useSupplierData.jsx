@@ -3,7 +3,7 @@ import {
   loadSupplierOrders,
   loadOrderMaterials,
   loadOrderNotes,
-  loadMaterialRefs,
+  loadRefsForOrder,
   loadUpcomingDeadlines,
   saveOrderNote,
   deleteOrderNote as deleteNoteDb,
@@ -22,7 +22,7 @@ export function SupplierDataProvider({ children }) {
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
 
-  // Initial load
+  // Initial load — orders + materials per type, refs loaded on-demand
   useEffect(() => {
     (async () => {
       try {
@@ -30,7 +30,6 @@ export function SupplierDataProvider({ children }) {
         const types = ['OV', 'OA', 'OP', 'OL', 'ACCIAIERIA'];
         const allOrders = {};
         const allMats = {};
-        const allRefs = {};
 
         for (const t of types) {
           try {
@@ -42,15 +41,6 @@ export function SupplierDataProvider({ children }) {
               for (const m of mats) {
                 if (!allMats[m.order_id]) allMats[m.order_id] = [];
                 allMats[m.order_id].push(m);
-              }
-
-              const matIds = mats.map(m => m.id);
-              if (matIds.length) {
-                const r = await loadMaterialRefs(matIds);
-                for (const ref of r) {
-                  if (!allRefs[ref.material_id]) allRefs[ref.material_id] = [];
-                  allRefs[ref.material_id].push(ref);
-                }
               }
             }
           } catch (err) {
@@ -77,7 +67,6 @@ export function SupplierDataProvider({ children }) {
 
         setOrders(allOrders);
         setMaterials(allMats);
-        setRefs(allRefs);
         setNotes(allNotes);
         setDeadlines(dl);
       } catch (err) {
@@ -87,6 +76,18 @@ export function SupplierDataProvider({ children }) {
       }
     })();
   }, []);
+
+  // Fetch refs on-demand for a single order (called when user expands an order)
+  const fetchRefs = useCallback(async (orderId) => {
+    // Skip if already loaded
+    if (refs[`_loaded_${orderId}`]) return;
+    try {
+      const grouped = await loadRefsForOrder(orderId);
+      setRefs(prev => ({ ...prev, ...grouped, [`_loaded_${orderId}`]: true }));
+    } catch (err) {
+      console.error(`[SupplierData] error loading refs for order ${orderId}:`, err);
+    }
+  }, [refs]);
 
   // Import parsed PDF data
   const importData = useCallback(async (orderType, parsedOrders) => {
@@ -111,27 +112,22 @@ export function SupplierDataProvider({ children }) {
         }
         setMaterials(prev => {
           const updated = { ...prev };
-          // Remove old entries for this type's orders
           for (const o of ords) delete updated[o.id];
           return { ...updated, ...newMats };
         });
-
-        // Reload refs
-        const matIds = mats.map(m => m.id);
-        if (matIds.length) {
-          const r = await loadMaterialRefs(matIds);
-          const newRefs = {};
-          for (const ref of r) {
-            if (!newRefs[ref.material_id]) newRefs[ref.material_id] = [];
-            newRefs[ref.material_id].push(ref);
-          }
-          setRefs(prev => {
-            const updated = { ...prev };
-            for (const mid of matIds) delete updated[mid];
-            return { ...updated, ...newRefs };
-          });
-        }
       }
+
+      // Clear cached refs for this type so they reload on expand
+      setRefs(prev => {
+        const updated = { ...prev };
+        const orderIds = ords.map(o => o.id);
+        for (const key of Object.keys(updated)) {
+          if (key.startsWith('_loaded_') && orderIds.includes(key.slice(8))) {
+            delete updated[key];
+          }
+        }
+        return updated;
+      });
 
       // Reload deadlines
       const dl = await loadUpcomingDeadlines(30);
@@ -176,7 +172,7 @@ export function SupplierDataProvider({ children }) {
   const value = {
     orders, materials, refs, notes, deadlines,
     loading, importing,
-    importData, upsertNote, deleteNote, updateDeadline,
+    importData, fetchRefs, upsertNote, deleteNote, updateDeadline,
   };
 
   return <SupplierCtx.Provider value={value}>{children}</SupplierCtx.Provider>;
