@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, lazy, Suspense } from 'react';
 import { DataProvider, useData } from './hooks/useData';
 import { computeMonthRows, computeYTDRows, groupByAgent, computeTrend, enrichOrdiniAperti, exportXLSX, exportAgentsSummaryXLSX } from './utils/analytics';
 import { MONTH_LABELS } from './utils/parsers';
@@ -9,6 +9,8 @@ import AgentView from './components/AgentView';
 import OrdiniAperti from './components/OrdiniAperti';
 import { TrendChart, AgentBarChart } from './components/Charts';
 
+const SupplierMonitor = lazy(() => import('./components/SupplierMonitor'));
+
 const TABS = [
   { id: 'overview', label: 'Overview'       },
   { id: 'clienti',  label: 'Per cliente'    },
@@ -18,17 +20,25 @@ const TABS = [
   { id: 'nuovi',    label: 'Nuovi clienti'  },
 ];
 
-const UPLOAD_PASSWORD = import.meta.env.VITE_UPLOAD_PASSWORD || 'vendite2026';
+const USERS = {
+  emanuele: { pwd: import.meta.env.VITE_USER_EMANUELE_PWD || import.meta.env.VITE_UPLOAD_PASSWORD || 'vendite2026', role: 'sales' },
+  ester:    { pwd: import.meta.env.VITE_USER_ESTER_PWD || 'acquisti2026', role: 'purchasing' },
+};
 const AUTH_KEY = 'sales_dashboard_auth';
+const ROLE_KEY = 'sales_dashboard_role';
 
 function LoginWall({ onLogin }) {
+  const [user, setUser] = useState('');
   const [pwd, setPwd] = useState('');
   const [err, setErr] = useState(false);
 
   const check = () => {
-    if (pwd === UPLOAD_PASSWORD) {
+    const key = user.trim().toLowerCase();
+    const entry = USERS[key];
+    if (entry && pwd === entry.pwd) {
       sessionStorage.setItem(AUTH_KEY, '1');
-      onLogin();
+      sessionStorage.setItem(ROLE_KEY, entry.role);
+      onLogin(entry.role);
     } else {
       setErr(true);
     }
@@ -37,21 +47,29 @@ function LoginWall({ onLogin }) {
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-page)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: '40px 48px', maxWidth: 380, width: '100%', textAlign: 'center' }}>
-        <div style={{ fontFamily: 'var(--font-serif)', fontSize: 22, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.3px', marginBottom: 4 }}>Sales Control</div>
-        <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 28 }}>Vendite vs Budget 2026</div>
+        <div style={{ fontFamily: 'var(--font-serif)', fontSize: 22, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.3px', marginBottom: 4 }}>Comvitea</div>
+        <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 28 }}>Accedi al pannello</div>
         <input
+          type="text" value={user}
+          onChange={e => { setUser(e.target.value); setErr(false); }}
+          onKeyDown={e => e.key === 'Enter' && document.getElementById('login-pwd').focus()}
+          placeholder="Utente"
+          autoFocus
+          style={{ width: '100%', fontSize: 14, padding: '10px 14px', borderRadius: 'var(--radius-md)', border: `1px solid ${err ? 'var(--red)' : 'var(--border)'}`, background: 'var(--bg-subtle)', color: 'var(--text-primary)', outline: 'none', marginBottom: 10, boxSizing: 'border-box' }}
+        />
+        <input
+          id="login-pwd"
           type="password" value={pwd}
           onChange={e => { setPwd(e.target.value); setErr(false); }}
           onKeyDown={e => e.key === 'Enter' && check()}
           placeholder="Password"
-          autoFocus
           style={{ width: '100%', fontSize: 14, padding: '10px 14px', borderRadius: 'var(--radius-md)', border: `1px solid ${err ? 'var(--red)' : 'var(--border)'}`, background: 'var(--bg-subtle)', color: 'var(--text-primary)', outline: 'none', marginBottom: 14, boxSizing: 'border-box' }}
         />
         <button onClick={check}
           style={{ width: '100%', fontSize: 14, padding: '10px 0', borderRadius: 'var(--radius-md)', border: 'none', background: 'var(--accent)', color: '#fff', fontWeight: 600, cursor: 'pointer' }}>
           Accedi
         </button>
-        {err && <div style={{ fontSize: 12, color: 'var(--red)', marginTop: 10 }}>Password errata</div>}
+        {err && <div style={{ fontSize: 12, color: 'var(--red)', marginTop: 10 }}>Credenziali errate</div>}
       </div>
     </div>
   );
@@ -83,6 +101,7 @@ function Dashboard() {
 
   const handleLogout = () => {
     sessionStorage.removeItem(AUTH_KEY);
+    sessionStorage.removeItem(ROLE_KEY);
     window.location.reload();
   };
 
@@ -233,8 +252,17 @@ function UploadArea() {
 
 export default function App() {
   const [authed, setAuthed] = useState(() => sessionStorage.getItem(AUTH_KEY) === '1');
+  const [role, setRole] = useState(() => sessionStorage.getItem(ROLE_KEY) || 'sales');
 
-  if (!authed) return <LoginWall onLogin={() => setAuthed(true)} />;
+  if (!authed) return <LoginWall onLogin={(r) => { setAuthed(true); setRole(r); }} />;
+
+  if (role === 'purchasing') {
+    return (
+      <Suspense fallback={<div style={{ minHeight: '100vh', background: 'var(--bg-page)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>Caricamento...</div>}>
+        <SupplierMonitor />
+      </Suspense>
+    );
+  }
 
   return <DataProvider><Dashboard /></DataProvider>;
 }
