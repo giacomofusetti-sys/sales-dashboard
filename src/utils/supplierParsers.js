@@ -344,15 +344,19 @@ export function parseOL(lines) {
 // ── Auto-detect PDF type from title line ─────────────────────
 
 export function detectPdfType(lines) {
+  const first50 = lines.slice(0, 50);
+
+  // Acciaieria check first — these PDFs use OA/ headers but must be typed ACCIAIERIA
+  if (first50.some(l => /acciaieria/i.test(l))) return 'ACCIAIERIA';
+
   for (const line of lines.slice(0, 10)) {
     if (/Lista ordini OV in scadenza/i.test(line)) return 'OV';
     if (/Lista ordini OA in scadenza/i.test(line)) return 'OA';
     if (/Lista ordini OP in scadenza/i.test(line) || /\*?OP\/\d{4}\/\d{7}/.test(line)) return 'OP';
     if (/Lista ordini OL in scadenza/i.test(line)) return 'OL';
-    if (/acciaieria/i.test(line)) return 'ACCIAIERIA';
   }
   // Fallback: check first order header
-  for (const line of lines.slice(0, 50)) {
+  for (const line of first50) {
     if (/^OV\//.test(line)) return 'OV';
     if (/^OA\//.test(line)) return 'OA';
     if (/^\*?OP\//.test(line)) return 'OP';

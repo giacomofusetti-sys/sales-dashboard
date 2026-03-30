@@ -2,8 +2,9 @@ import { supabase } from './supabase.js';
 
 // ── Load orders ──────────────────────────────────────────────
 export async function loadSupplierOrders(orderType) {
-  const query = supabase.from('supplier_orders').select('*').order('order_ref');
-  if (orderType) query.eq('order_type', orderType);
+  let query = supabase.from('supplier_orders').select('*');
+  if (orderType) query = query.eq('order_type', orderType);
+  query = query.order('order_ref');
   const { data, error } = await query;
   if (error) throw error;
   return data;
@@ -49,9 +50,10 @@ export async function loadMaterialRefs(materialIds) {
 
 // ── Load notes ───────────────────────────────────────────────
 export async function loadOrderNotes(orderType, orderRef) {
-  const query = supabase.from('order_notes').select('*').order('created_at');
-  if (orderType) query.eq('order_type', orderType);
-  if (orderRef) query.eq('order_ref', orderRef);
+  let query = supabase.from('order_notes').select('*');
+  if (orderType) query = query.eq('order_type', orderType);
+  if (orderRef) query = query.eq('order_ref', orderRef);
+  query = query.order('created_at');
   const { data, error } = await query;
   if (error) throw error;
   return data;
