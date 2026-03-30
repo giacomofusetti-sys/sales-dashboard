@@ -4,7 +4,8 @@ import {
   loadOrderMaterials,
   loadOrderNotes,
   loadRefsForOrder,
-  loadUpcomingDeadlines,
+  countDeadlines,
+  loadDeadlineRows,
   saveOrderNote,
   deleteOrderNote as deleteNoteDb,
   updateScadenzaEffettiva as updateDeadlineDb,
@@ -18,7 +19,6 @@ export function SupplierDataProvider({ children }) {
   const [materials, setMaterials] = useState({});      // { orderId: [...] }
   const [refs, setRefs] = useState({});                // { materialId: [...] }
   const [notes, setNotes] = useState([]);
-  const [deadlines, setDeadlines] = useState([]);
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
 
@@ -56,19 +56,11 @@ export function SupplierDataProvider({ children }) {
           console.error('[SupplierData] error loading notes:', err);
         }
 
-        let dl = [];
-        try {
-          dl = await loadUpcomingDeadlines(30);
-        } catch (err) {
-          console.error('[SupplierData] error loading deadlines:', err);
-        }
-
         console.log('[SupplierData] load complete:', Object.entries(allOrders).map(([k, v]) => `${k}=${v.length}`).join(', '));
 
         setOrders(allOrders);
         setMaterials(allMats);
         setNotes(allNotes);
-        setDeadlines(dl);
       } catch (err) {
         console.error('[SupplierData] load error:', err);
       } finally {
@@ -129,10 +121,6 @@ export function SupplierDataProvider({ children }) {
         return updated;
       });
 
-      // Reload deadlines
-      const dl = await loadUpcomingDeadlines(30);
-      setDeadlines(dl);
-
       return result;
     } finally {
       setImporting(false);
@@ -164,14 +152,12 @@ export function SupplierDataProvider({ children }) {
       }
       return updated;
     });
-    // Refresh deadlines
-    const dl = await loadUpcomingDeadlines(30);
-    setDeadlines(dl);
   }, []);
 
   const value = {
-    orders, materials, refs, notes, deadlines,
+    orders, materials, refs, notes,
     loading, importing,
+    countDeadlines, loadDeadlineRows,
     importData, fetchRefs, upsertNote, deleteNote, updateDeadline,
   };
 

@@ -23,33 +23,49 @@ export async function loadOrderMaterials(orderIds) {
   return data;
 }
 
-// ── Load materials with deadlines in a relevant window ───────
-// Floor (90 days ago) avoids pulling ancient overdue items;
-// Cutoff (withinDays ahead) caps the future window.
-// PostgREST max_rows is 1000 server-side — .limit() can't exceed it.
-export async function loadUpcomingDeadlines(withinDays = 30) {
-  const today = new Date();
-  const floor = new Date(today);
-  floor.setDate(floor.getDate() - 90);
-  const floorStr = floor.toISOString().split('T')[0];
+// ── Deadline helpers ─────────────────────────────────────────
+function dateStr(d) { return d.toISOString().split('T')[0]; }
 
-  const cutoff = new Date(today);
-  cutoff.setDate(cutoff.getDate() + withinDays);
-  const cutoffStr = cutoff.toISOString().split('T')[0];
+// Build a deadline range filter for PostgREST .or()
+// Uses COALESCE logic: scadenza_effettiva if set, else scadenza
+function deadlineRangeFilter(fromStr, toStr) {
+  const parts = [];
+  if (fromStr && toStr) {
+    parts.push(`and(scadenza_effettiva.not.is.null,scadenza_effettiva.gte.${fromStr},scadenza_effettiva.lte.${toStr})`);
+    parts.push(`and(scadenza_effettiva.is.null,scadenza.gte.${fromStr},scadenza.lte.${toStr})`);
+  } else if (toStr) {
+    parts.push(`and(scadenza_effettiva.not.is.null,scadenza_effettiva.lte.${toStr})`);
+    parts.push(`and(scadenza_effettiva.is.null,scadenza.lte.${toStr})`);
+  } else if (fromStr) {
+    parts.push(`and(scadenza_effettiva.not.is.null,scadenza_effettiva.gte.${fromStr})`);
+    parts.push(`and(scadenza_effettiva.is.null,scadenza.gte.${fromStr})`);
+  }
+  return parts.join(',');
+}
 
-  // effective_date = COALESCE(scadenza_effettiva, scadenza)
-  // WHERE scadenza IS NOT NULL
-  //   AND effective_date >= floor AND effective_date <= cutoff
-  const { data, error } = await supabase
+// Count deadlines in a date range — head:true + count:'exact' avoids row limits
+export async function countDeadlines(fromStr, toStr) {
+  const filter = deadlineRangeFilter(fromStr, toStr);
+  let query = supabase
+    .from('order_materials')
+    .select('id, supplier_orders!inner(id)', { count: 'exact', head: true })
+    .not('scadenza', 'is', null);
+  if (filter) query = query.or(filter);
+  const { count, error } = await query;
+  if (error) throw error;
+  return count ?? 0;
+}
+
+// Load deadline detail rows for a date range (limited to 500 per page)
+export async function loadDeadlineRows(fromStr, toStr, { page = 0, pageSize = 500 } = {}) {
+  const filter = deadlineRangeFilter(fromStr, toStr);
+  let query = supabase
     .from('order_materials')
     .select('*, supplier_orders!inner(order_type, order_ref, client_name, supplier_name)')
-    .not('scadenza', 'is', null)
-    .or(
-      `and(scadenza_effettiva.not.is.null,scadenza_effettiva.gte.${floorStr},scadenza_effettiva.lte.${cutoffStr}),` +
-      `and(scadenza_effettiva.is.null,scadenza.gte.${floorStr},scadenza.lte.${cutoffStr})`
-    )
-    .order('scadenza');
-  console.log(`[loadUpcomingDeadlines] floor=${floorStr}, cutoff=${cutoffStr}, rows=${data?.length ?? 'null'}, error=${error?.message ?? 'none'}`);
+    .not('scadenza', 'is', null);
+  if (filter) query = query.or(filter);
+  query = query.order('scadenza').range(page * pageSize, (page + 1) * pageSize - 1);
+  const { data, error } = await query;
   if (error) throw error;
   return data;
 }
