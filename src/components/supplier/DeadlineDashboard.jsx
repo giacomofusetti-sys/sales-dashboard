@@ -42,13 +42,17 @@ function rangeDates(key) {
   }
 }
 
-export default function DeadlineDashboard() {
+const DOC_TYPES = ['OV', 'OA', 'OP', 'OL', 'ACCIAIERIA'];
+
+export default function DeadlineDashboard({ onNavigateToOrder }) {
   const { countDeadlines, loadDeadlineRows, loading } = useSupplierData();
   const [counts, setCounts] = useState({});
   const [activeRange, setActiveRange] = useState('scaduti');
   const [rows, setRows] = useState([]);
   const [loadingRows, setLoadingRows] = useState(false);
   const [groupBySupplier, setGroupBySupplier] = useState(true);
+  const [searchText, setSearchText] = useState('');
+  const [activeDocTypes, setActiveDocTypes] = useState(new Set());
 
   // Load counts for all ranges
   useEffect(() => {
@@ -90,11 +94,43 @@ export default function DeadlineDashboard() {
     return () => { cancelled = true; };
   }, [loading, activeRange, loadDeadlineRows]);
 
+  const toggleDocType = useCallback((type) => {
+    setActiveDocTypes(prev => {
+      const next = new Set(prev);
+      if (next.has(type)) next.delete(type);
+      else next.add(type);
+      return next;
+    });
+  }, []);
+
+  // Filter rows by search text and doc type
+  const filteredRows = useMemo(() => {
+    let result = rows;
+    if (searchText.trim()) {
+      const q = searchText.toLowerCase();
+      result = result.filter(d => {
+        const info = d.supplier_orders || {};
+        return (info.supplier_name || '').toLowerCase().includes(q)
+          || (info.client_name || '').toLowerCase().includes(q)
+          || (info.order_ref || '').toLowerCase().includes(q)
+          || (d.codice_prodotto || '').toLowerCase().includes(q)
+          || (d.descrizione || '').toLowerCase().includes(q);
+      });
+    }
+    if (activeDocTypes.size > 0) {
+      result = result.filter(d => {
+        const info = d.supplier_orders || {};
+        return activeDocTypes.has(info.order_type);
+      });
+    }
+    return result;
+  }, [rows, searchText, activeDocTypes]);
+
   // Group rows by supplier
   const grouped = useMemo(() => {
     if (!groupBySupplier) return null;
     const map = {};
-    for (const d of rows) {
+    for (const d of filteredRows) {
       const info = d.supplier_orders || {};
       const name = info.supplier_name || info.client_name || 'Sconosciuto';
       if (!map[name]) map[name] = { items: [], types: new Set() };
@@ -104,7 +140,7 @@ export default function DeadlineDashboard() {
     return Object.entries(map)
       .map(([name, g]) => ({ name, items: g.items, types: [...g.types] }))
       .sort((a, b) => b.items.length - a.items.length);
-  }, [rows, groupBySupplier]);
+  }, [filteredRows, groupBySupplier]);
 
   if (loading) {
     return <div style={{ padding: '3rem 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>Caricamento scadenze...</div>;
@@ -137,10 +173,38 @@ export default function DeadlineDashboard() {
         })}
       </div>
 
+      {/* Filters */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+        <input
+          type="text"
+          value={searchText}
+          onChange={e => setSearchText(e.target.value)}
+          placeholder="Cerca fornitore / cliente..."
+          style={{ fontSize: 12, padding: '6px 10px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', background: 'var(--bg-subtle)', color: 'var(--text-primary)', outline: 'none', minWidth: 200, maxWidth: 320 }}
+        />
+        <div style={{ display: 'flex', gap: 4 }}>
+          {DOC_TYPES.map(t => {
+            const active = activeDocTypes.has(t);
+            return (
+              <button key={t} onClick={() => toggleDocType(t)}
+                style={{
+                  fontSize: 10, fontWeight: 600, padding: '4px 8px', borderRadius: 'var(--radius-sm)',
+                  border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
+                  background: active ? 'var(--accent)' : 'var(--bg-card)',
+                  color: active ? '#fff' : 'var(--text-secondary)',
+                  cursor: 'pointer', transition: 'all 0.15s',
+                }}>
+                {t}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       {/* View toggle */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
         <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>
-          {loadingRows ? 'Caricamento...' : `${rows.length} materiali`}{rows.length >= 500 && ' (max 500)'}
+          {loadingRows ? 'Caricamento...' : `${filteredRows.length} materiali`}{filteredRows.length !== rows.length && ` (filtrati da ${rows.length})`}{rows.length >= 500 && ' (max 500)'}
         </div>
         <button onClick={() => setGroupBySupplier(p => !p)}
           style={{ fontSize: 11, padding: '4px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', background: groupBySupplier ? 'var(--bg-subtle)' : 'var(--bg-card)', color: 'var(--text-secondary)', cursor: 'pointer' }}>
@@ -148,9 +212,9 @@ export default function DeadlineDashboard() {
         </button>
       </div>
 
-      {rows.length === 0 && !loadingRows && (
+      {filteredRows.length === 0 && !loadingRows && (
         <div style={{ textAlign: 'center', padding: '2rem 0', color: 'var(--text-tertiary)', fontSize: 13 }}>
-          Nessun materiale in questo range.
+          {rows.length === 0 ? 'Nessun materiale in questo range.' : 'Nessun risultato con i filtri correnti.'}
         </div>
       )}
 
@@ -158,20 +222,20 @@ export default function DeadlineDashboard() {
       {groupBySupplier && grouped && grouped.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           {grouped.map(g => (
-            <SupplierGroup key={g.name} group={g} colors={colors} />
+            <SupplierGroup key={g.name} group={g} colors={colors} onOrderClick={onNavigateToOrder} />
           ))}
         </div>
       )}
 
       {/* Flat list */}
-      {!groupBySupplier && rows.length > 0 && (
-        <DetailTable rows={rows} />
+      {!groupBySupplier && filteredRows.length > 0 && (
+        <DetailTable rows={filteredRows} onOrderClick={onNavigateToOrder} />
       )}
     </div>
   );
 }
 
-function SupplierGroup({ group, colors }) {
+function SupplierGroup({ group, colors, onOrderClick }) {
   const [expanded, setExpanded] = useState(false);
   return (
     <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
@@ -196,14 +260,24 @@ function SupplierGroup({ group, colors }) {
       </button>
       {expanded && (
         <div style={{ borderTop: '1px solid var(--border)' }}>
-          <DetailTable rows={group.items} />
+          <DetailTable rows={group.items} onOrderClick={onOrderClick} />
         </div>
       )}
     </div>
   );
 }
 
-function DetailTable({ rows }) {
+function DetailTable({ rows, onOrderClick }) {
+  const [sortAsc, setSortAsc] = useState(true);
+
+  const sortedRows = useMemo(() => {
+    return [...rows].sort((a, b) => {
+      const da = a.scadenza_effettiva || a.scadenza || '';
+      const db = b.scadenza_effettiva || b.scadenza || '';
+      return sortAsc ? da.localeCompare(db) : db.localeCompare(da);
+    });
+  }, [rows, sortAsc]);
+
   return (
     <div style={{ overflowX: 'auto' }}>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
@@ -213,12 +287,14 @@ function DetailTable({ rows }) {
             <th style={thStyle}>Ordine</th>
             <th style={thStyle}>Fornitore/Cliente</th>
             <th style={thStyle}>Prodotto</th>
-            <th style={thStyle}>Scadenza</th>
+            <th style={{ ...thStyle, cursor: 'pointer', userSelect: 'none' }} onClick={() => setSortAsc(p => !p)}>
+              Scadenza {sortAsc ? '\u25B2' : '\u25BC'}
+            </th>
             <th style={thStyle}>Descrizione</th>
           </tr>
         </thead>
         <tbody>
-          {rows.map((d, i) => {
+          {sortedRows.map((d, i) => {
             const effectiveDate = d.scadenza_effettiva || d.scadenza;
             const orderInfo = d.supplier_orders || {};
             return (
@@ -228,7 +304,22 @@ function DetailTable({ rows }) {
                     {orderInfo.order_type}
                   </span>
                 </td>
-                <td style={{ ...tdStyle, fontFamily: 'var(--font-serif)', fontWeight: 600 }}>{orderInfo.order_ref}</td>
+                <td style={{ ...tdStyle, fontFamily: 'var(--font-serif)', fontWeight: 600 }}>
+                  {onOrderClick ? (
+                    <button
+                      onClick={() => onOrderClick(orderInfo.order_type, orderInfo.order_ref)}
+                      style={{
+                        background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+                        fontFamily: 'var(--font-serif)', fontWeight: 600, fontSize: 12,
+                        color: 'var(--accent)', textDecoration: 'none',
+                      }}
+                      onMouseEnter={e => { e.currentTarget.style.textDecoration = 'underline'; }}
+                      onMouseLeave={e => { e.currentTarget.style.textDecoration = 'none'; }}
+                    >
+                      {orderInfo.order_ref}
+                    </button>
+                  ) : orderInfo.order_ref}
+                </td>
                 <td style={tdStyle}>{orderInfo.supplier_name || orderInfo.client_name || '\u2014'}</td>
                 <td style={{ ...tdStyle, fontFamily: 'var(--font-serif)' }}>{d.codice_prodotto || '\u2014'}</td>
                 <td style={{ ...tdStyle, fontFamily: 'var(--font-serif)', fontWeight: 600 }}>

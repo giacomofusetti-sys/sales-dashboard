@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { SupplierDataProvider, useSupplierData } from '../hooks/useSupplierData';
 import DeadlineDashboard from './supplier/DeadlineDashboard';
 import OrderList from './supplier/OrderList';
@@ -20,6 +20,14 @@ const TABS = [
 function MonitorContent() {
   const { orders, loading } = useSupplierData();
   const [tab, setTab] = useState('scadenze');
+  const [highlightOrder, setHighlightOrder] = useState(null);
+
+  const handleNavigateToOrder = useCallback((orderType, orderRef) => {
+    setTab(orderType);
+    setHighlightOrder(orderRef);
+    // Clear highlight after a delay
+    setTimeout(() => setHighlightOrder(null), 3000);
+  }, []);
 
   const handleLogout = () => {
     sessionStorage.removeItem(AUTH_KEY);
@@ -79,12 +87,12 @@ function MonitorContent() {
 
             {/* Tab content */}
             <div style={{ background: 'var(--bg-card)', borderRadius: 'var(--radius-lg)', border: '1px solid var(--border)', padding: '20px 24px' }}>
-              {tab === 'scadenze' && <DeadlineDashboard />}
-              {tab === 'OV' && <OrderList orderType="OV" />}
-              {tab === 'OA' && <OrderList orderType="OA" />}
-              {tab === 'OP' && <OrderList orderType="OP" />}
-              {tab === 'OL' && <OrderList orderType="OL" />}
-              {tab === 'ACCIAIERIA' && <OrderList orderType="ACCIAIERIA" />}
+              {tab === 'scadenze' && <DeadlineDashboard onNavigateToOrder={handleNavigateToOrder} />}
+              {tab === 'OV' && <OrderList orderType="OV" highlightOrder={highlightOrder} />}
+              {tab === 'OA' && <OrderList orderType="OA" highlightOrder={highlightOrder} />}
+              {tab === 'OP' && <OrderList orderType="OP" highlightOrder={highlightOrder} />}
+              {tab === 'OL' && <OrderList orderType="OL" highlightOrder={highlightOrder} />}
+              {tab === 'ACCIAIERIA' && <OrderList orderType="ACCIAIERIA" highlightOrder={highlightOrder} />}
               {tab === 'upload' && <SupplierUpload />}
             </div>
           </>

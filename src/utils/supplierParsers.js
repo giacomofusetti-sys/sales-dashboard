@@ -33,7 +33,7 @@ const PRODUCT_CODE_RE = /^[A-Z0-9]{1,5}#[A-Z0-9]+$/;
 const OV_HEADER_RE = /^(OV\/\d{4}\/\d{5})\s*-\s*(.*)/;
 const OV_CLIENT_RE = /C\s+(\d+)\s+(.+?)(?:\s{2,}|\s+\d{2}\/\d{2}\/\d{2})/;
 const OV_DATE_RE = /(\d{2}\/\d{2}\/\d{2})/;
-const OV_MATERIAL_RE = /^(\d{2}\/\d{2}\/\d{2})\s+([A-Z0-9]{1,5}#[A-Z0-9]+)\s+(.*)/;
+const OV_MATERIAL_RE = /^(?:(\d+)\s+)?(\d{2}\/\d{2}\/\d{2})\s+([A-Z0-9]{1,5}#[A-Z0-9]+)\s+(.*)/;
 const OV_SUPPLIER_RE = /^F\s+(\d+)\s+(.*?)\s+(OA|OP|OL)\/(\d{4}\/\d{7})\s+(\d{2}\/\d{2}\/\d{2})\s+([\d.,]+)\s+(\d{2}\/\d{2}\/\d{2})/;
 const OV_FOOTER_RE = /^Valore Residuo Ordine\s+([\d.,]+)/;
 const OV_PESO_RE = /Peso Totale Ordine\s+([\d.,]+)/;
@@ -84,13 +84,14 @@ export function parseOV(lines) {
     const mm = line.match(OV_MATERIAL_RE);
     if (mm) {
       currentMat = {
-        scadenza: parseDateDDMMYY(mm[1]),
-        codiceProdotto: mm[2],
+        pos: mm[1] || null,
+        scadenza: parseDateDDMMYY(mm[2]),
+        codiceProdotto: mm[3],
         descrizione: '',
         refs: [],
       };
       // Parse remaining fields from the description part
-      const rest = mm[3];
+      const rest = mm[4];
       const parts = rest.split(/\s{2,}/);
       if (parts.length > 0) currentMat.descrizione = parts[0].trim();
 
@@ -129,6 +130,30 @@ export function parseOV(lines) {
   }
 
   if (current) orders.push(current);
+
+  // Deduplicate materials within each order: if two materials share the same
+  // codiceProdotto + scadenza, keep the one with more data (more refs, then
+  // more non-null fields).
+  for (const order of orders) {
+    const seen = new Map();
+    for (const mat of order.materials) {
+      const key = `${mat.codiceProdotto}|${mat.scadenza || ''}`;
+      if (seen.has(key)) {
+        const existing = seen.get(key);
+        const scoreOf = (m) => {
+          const nonNull = Object.values(m).filter(v => v != null && v !== '').length;
+          return (m.refs ? m.refs.length : 0) * 1000 + nonNull;
+        };
+        if (scoreOf(mat) > scoreOf(existing)) {
+          seen.set(key, mat);
+        }
+      } else {
+        seen.set(key, mat);
+      }
+    }
+    order.materials = [...seen.values()];
+  }
+
   return orders;
 }
 

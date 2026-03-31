@@ -1,14 +1,29 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { useSupplierData } from '../../hooks/useSupplierData';
 
-export default function OrderList({ orderType }) {
+export default function OrderList({ orderType, highlightOrder }) {
   const { orders, materials, refs, notes, fetchRefs, upsertNote, deleteNote, updateDeadline } = useSupplierData();
   const [search, setSearch] = useState('');
   const [expandedOrder, setExpandedOrder] = useState(null);
   const [editingNote, setEditingNote] = useState(null);  // { orderRef, codiceProdotto, text, id }
   const [editingDate, setEditingDate] = useState(null);   // { materialId, date }
+  const highlightRef = useRef(null);
 
   const typeOrders = orders[orderType] || [];
+
+  // Auto-expand and scroll to highlighted order
+  useEffect(() => {
+    if (!highlightOrder) return;
+    const order = typeOrders.find(o => o.order_ref === highlightOrder);
+    if (order) {
+      setExpandedOrder(order.id);
+      fetchRefs(order.id);
+      // Scroll after render
+      requestAnimationFrame(() => {
+        highlightRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      });
+    }
+  }, [highlightOrder, typeOrders]);
 
   const filtered = useMemo(() => {
     if (!search.trim()) return typeOrders;
@@ -74,12 +89,19 @@ export default function OrderList({ orderType }) {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {filtered.map(order => {
           const isExpanded = expandedOrder === order.id;
+          const isHighlighted = highlightOrder === order.order_ref;
           const mats = materials[order.id] || [];
           const orderNotes = getNotesForOrder(order.order_ref);
           const orderLevelNotes = orderNotes.filter(n => !n.codice_prodotto);
 
           return (
-            <div key={order.id} style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
+            <div key={order.id} ref={isHighlighted ? highlightRef : null}
+              style={{
+                border: `1px solid ${isHighlighted ? 'var(--accent)' : 'var(--border)'}`,
+                borderRadius: 'var(--radius-md)', overflow: 'hidden',
+                boxShadow: isHighlighted ? '0 0 0 2px var(--accent-light, rgba(59,130,246,0.2))' : 'none',
+                transition: 'border-color 0.3s, box-shadow 0.3s',
+              }}>
               {/* Order header */}
               <button
                 onClick={() => { if (!isExpanded) fetchRefs(order.id); setExpandedOrder(isExpanded ? null : order.id); }}
@@ -119,7 +141,7 @@ export default function OrderList({ orderType }) {
                     {order.supplier_code && <span>Cod. {order.supplier_code}</span>}
                     {order.supplier_phone && <span>Tel. {order.supplier_phone}</span>}
                     {order.client_code && <span>Cod. cliente {order.client_code}</span>}
-                    {order.valore_residuo != null && <span>Val. residuo: <b style={{ fontFamily: 'var(--font-serif)' }}>{fmtNum(order.valore_residuo)}</b></span>}
+                    {order.valore_residuo != null && <span>Val. residuo: <b style={{ fontFamily: 'var(--font-serif)' }}>{order.valore_residuo.toLocaleString('it-IT', { style: 'currency', currency: 'EUR' })}</b></span>}
                     {order.peso_totale != null && <span>Peso tot.: <b style={{ fontFamily: 'var(--font-serif)' }}>{fmtNum(order.peso_totale)}</b></span>}
                     {order.tot_peso_res != null && <span>Peso res.: <b style={{ fontFamily: 'var(--font-serif)' }}>{fmtNum(order.tot_peso_res)}</b></span>}
                   </div>
@@ -143,11 +165,11 @@ export default function OrderList({ orderType }) {
                             <th style={thStyle}>Scad. Effettiva</th>
                             <th style={thStyle}>Codice</th>
                             <th style={thStyle}>Descrizione</th>
-                            {orderType === 'OV' && <><th style={thStyle}>Peso</th></>}
+                            {orderType === 'OV' && <><th style={thStyle}>Peso</th><th style={thStyle}>Giacenza</th><th style={thStyle}>Impegnato</th><th style={thStyle}>In Ordine</th></>}
                             {(orderType === 'OA' || orderType === 'OP' || orderType === 'ACCIAIERIA') && (
                               <><th style={thStyle}>Ordinato</th><th style={thStyle}>Ricevuto</th><th style={thStyle}>Val. Res.</th></>
                             )}
-                            {orderType === 'OL' && <><th style={thStyle}>Qty</th><th style={thStyle}>Kg</th><th style={thStyle}>Status</th></>}
+                            {orderType === 'OL' && <><th style={thStyle}>Qty</th><th style={thStyle}>Kg</th><th style={thStyle}>Status</th><th style={thStyle}>Bolla</th></>}
                             <th style={thStyle}>Rif.</th>
                             <th style={thStyle}>Note</th>
                           </tr>
@@ -194,7 +216,7 @@ export default function OrderList({ orderType }) {
                                 </td>
                                 <td style={{ ...tdStyle, fontFamily: 'var(--font-serif)', fontWeight: 600 }}>{mat.codice_prodotto || '—'}</td>
                                 <td style={tdStyle}>{mat.descrizione || '—'}</td>
-                                {orderType === 'OV' && <td style={{ ...tdStyle, fontFamily: 'var(--font-serif)' }}>{fmtNum(mat.peso)}</td>}
+                                {orderType === 'OV' && <><td style={{ ...tdStyle, fontFamily: 'var(--font-serif)' }}>{fmtNum(mat.peso)}</td><td style={{ ...tdStyle, fontFamily: 'var(--font-serif)' }}>{fmtNum(mat.giacenza)}</td><td style={{ ...tdStyle, fontFamily: 'var(--font-serif)' }}>{fmtNum(mat.impegnato)}</td><td style={{ ...tdStyle, fontFamily: 'var(--font-serif)' }}>{fmtNum(mat.in_ordine)}</td></>}
                                 {(orderType === 'OA' || orderType === 'OP' || orderType === 'ACCIAIERIA') && (
                                   <>
                                     <td style={{ ...tdStyle, fontFamily: 'var(--font-serif)' }}>{fmtNum(mat.ordinato)}</td>
@@ -207,6 +229,7 @@ export default function OrderList({ orderType }) {
                                     <td style={{ ...tdStyle, fontFamily: 'var(--font-serif)' }}>{fmtNum(mat.qty_inviata)}</td>
                                     <td style={{ ...tdStyle, fontFamily: 'var(--font-serif)' }}>{fmtNum(mat.kg)}</td>
                                     <td style={{ ...tdStyle, fontSize: 11 }}>{mat.status || '—'}</td>
+                                    <td style={{ ...tdStyle, fontSize: 11 }}>{mat.bolla || '—'}</td>
                                   </>
                                 )}
                                 <td style={tdStyle}>
