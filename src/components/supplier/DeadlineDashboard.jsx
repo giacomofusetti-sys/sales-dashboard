@@ -53,6 +53,7 @@ export default function DeadlineDashboard({ onNavigateToOrder }) {
   const [groupBySupplier, setGroupBySupplier] = useState(true);
   const [searchText, setSearchText] = useState('');
   const [activeDocTypes, setActiveDocTypes] = useState(new Set());
+  const [roleFilter, setRoleFilter] = useState(null); // null | 'clienti' | 'fornitori'
 
   // Load counts for all ranges
   useEffect(() => {
@@ -103,9 +104,14 @@ export default function DeadlineDashboard({ onNavigateToOrder }) {
     });
   }, []);
 
-  // Filter rows by search text and doc type
+  // Filter rows by role, search text, and doc type
   const filteredRows = useMemo(() => {
     let result = rows;
+    if (roleFilter === 'clienti') {
+      result = result.filter(d => (d.supplier_orders || {}).order_type === 'OV');
+    } else if (roleFilter === 'fornitori') {
+      result = result.filter(d => (d.supplier_orders || {}).order_type !== 'OV');
+    }
     if (searchText.trim()) {
       const q = searchText.toLowerCase();
       result = result.filter(d => {
@@ -124,7 +130,7 @@ export default function DeadlineDashboard({ onNavigateToOrder }) {
       });
     }
     return result;
-  }, [rows, searchText, activeDocTypes]);
+  }, [rows, roleFilter, searchText, activeDocTypes]);
 
   // Group rows by supplier
   const grouped = useMemo(() => {
@@ -175,6 +181,22 @@ export default function DeadlineDashboard({ onNavigateToOrder }) {
 
       {/* Filters */}
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+        <div style={{ display: 'flex', gap: 0, borderRadius: 'var(--radius-sm)', overflow: 'hidden', border: '1px solid var(--border)' }}>
+          {[{ key: 'fornitori', label: 'Fornitori' }, { key: 'clienti', label: 'Clienti' }].map(r => {
+            const active = roleFilter === r.key;
+            return (
+              <button key={r.key} onClick={() => setRoleFilter(active ? null : r.key)}
+                style={{
+                  fontSize: 11, fontWeight: 600, padding: '5px 12px', border: 'none',
+                  background: active ? 'var(--accent)' : 'var(--bg-card)',
+                  color: active ? '#fff' : 'var(--text-secondary)',
+                  cursor: 'pointer', transition: 'all 0.15s',
+                }}>
+                {r.label}
+              </button>
+            );
+          })}
+        </div>
         <input
           type="text"
           value={searchText}
