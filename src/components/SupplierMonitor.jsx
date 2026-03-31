@@ -22,12 +22,10 @@ const TABS = [
 const ORDER_TYPES = ['OV', 'OA', 'OP', 'OL', 'ACCIAIERIA'];
 
 // Urgency levels from materials already loaded in context
-const URGENCY = [
-  { key: 'scaduti', label: 'Scaduti',    dot: '#EF4444', test: d => d < 0 },
-  { key: '3g',      label: 'Entro 3gg',  dot: '#F97316', test: d => d >= 0 && d <= 3 },
-  { key: '7g',      label: 'Entro 7gg',  dot: '#EAB308', test: d => d > 3 && d <= 7 },
-  { key: '14g',     label: 'Entro 14gg', dot: '#22C55E', test: d => d > 7 && d <= 14 },
-  { key: '30g',     label: 'Entro 30gg', dot: '#94A3B8', test: d => d > 14 && d <= 30 },
+const URGENCY_LEVELS = [
+  { idx: 0, test: d => d < 0 },       // scaduti
+  { idx: 1, test: d => d >= 0 && d <= 3 },  // 3gg
+  { idx: 2, test: d => d > 3 && d <= 7 },   // 7gg
 ];
 
 function daysUntilDeadline(mat) {
@@ -47,11 +45,6 @@ function MonitorContent() {
     setTimeout(() => setHighlightOrder(null), 3000);
   }, []);
 
-  const handleNavigateToDeadlines = useCallback((rangeKey) => {
-    setTab('scadenze');
-    // DeadlineDashboard will pick up the range from its own state
-  }, []);
-
   const handleLogout = () => {
     sessionStorage.removeItem(AUTH_KEY);
     sessionStorage.removeItem(ROLE_KEY);
@@ -60,41 +53,31 @@ function MonitorContent() {
 
   const orderCount = (type) => (orders[type] || []).length;
 
-  // Compute urgency counts from loaded materials
-  const { globalCounts, typeBadge } = useMemo(() => {
-    const gc = { scaduti: 0, '3g': 0, '7g': 0, '14g': 0, '30g': 0 };
-    const typeWorst = {}; // per type: worst urgency index (lower = more urgent)
-
+  // Compute urgency badge per type from loaded materials
+  const typeBadge = useMemo(() => {
+    const tb = {};
     for (const type of ORDER_TYPES) {
       const ords = orders[type] || [];
-      let worst = -1; // no urgency
+      let worst = -1;
       for (const o of ords) {
-        const mats = materials[o.id] || [];
-        for (const m of mats) {
+        for (const m of (materials[o.id] || [])) {
           const d = daysUntilDeadline(m);
           if (d === null) continue;
-          for (let i = 0; i < URGENCY.length; i++) {
-            if (URGENCY[i].test(d)) {
-              gc[URGENCY[i].key]++;
-              if (worst === -1 || i < worst) worst = i;
+          for (const lvl of URGENCY_LEVELS) {
+            if (lvl.test(d) && (worst === -1 || lvl.idx < worst)) {
+              worst = lvl.idx;
               break;
             }
           }
+          if (worst === 0) break;
         }
+        if (worst === 0) break;
       }
-      typeWorst[type] = worst;
-    }
-
-    // Badge color: worst urgency for each type
-    const tb = {};
-    for (const type of ORDER_TYPES) {
-      const w = typeWorst[type];
-      if (w >= 0 && w <= 1) tb[type] = '#EF4444'; // red: scaduti or 3gg
-      else if (w === 2) tb[type] = '#F97316';      // orange: 7gg
+      if (worst >= 0 && worst <= 1) tb[type] = '#EF4444';
+      else if (worst === 2) tb[type] = '#F97316';
       else tb[type] = null;
     }
-
-    return { globalCounts: gc, typeBadge: tb };
+    return tb;
   }, [orders, materials]);
 
   return (
@@ -110,31 +93,6 @@ function MonitorContent() {
           <button onClick={handleLogout} style={{ fontSize: 11, padding: '5px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', background: 'none', color: 'var(--text-tertiary)', cursor: 'pointer' }}>Esci</button>
         </div>
       </div>
-
-      {/* 1a. Urgency status bar */}
-      {!loading && (
-        <div style={{ background: 'var(--bg-card)', borderBottom: '1px solid var(--border)' }}>
-          <div style={{ maxWidth: 1320, margin: '0 auto', padding: '6px 24px', display: 'flex', alignItems: 'center', gap: 16 }}>
-            {URGENCY.map(u => {
-              const count = globalCounts[u.key];
-              if (count === 0 && u.key === '30g') return null; // hide 30g if 0
-              return (
-                <button key={u.key} onClick={() => handleNavigateToDeadlines(u.key)}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 5, background: 'none', border: 'none',
-                    cursor: 'pointer', padding: '2px 0', fontSize: 12, color: 'var(--text-secondary)',
-                  }}>
-                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: u.dot, display: 'inline-block', flexShrink: 0 }} />
-                  <span style={{ fontFamily: 'var(--font-serif)', fontWeight: 700, fontSize: 14, color: count > 0 ? 'var(--text-primary)' : 'var(--text-tertiary)' }}>
-                    {count}
-                  </span>
-                  <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{u.label.toLowerCase()}</span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
 
       <div style={{ maxWidth: 1320, margin: '0 auto', padding: '20px 24px' }}>
         {/* Loading */}
