@@ -97,6 +97,74 @@ export async function loadRefsForOrder(orderId) {
   return grouped;
 }
 
+// ── Search orders (for order map) ────────────────────────────
+export async function searchOrders(query) {
+  const q = `%${query}%`;
+  const { data, error } = await supabase
+    .from('supplier_orders')
+    .select('id, order_type, order_ref, order_date, client_name, supplier_name, valore_residuo, peso_totale, tot_peso_res')
+    .or(`order_ref.ilike.${q},client_name.ilike.${q},supplier_name.ilike.${q}`)
+    .order('order_ref')
+    .limit(50);
+  if (error) throw error;
+  return data;
+}
+
+// ── Find linked orders via refs ─────────────────────────────
+// Forward: refs FROM this order's materials (e.g. OV → OA/OP/OL)
+// Reverse: refs TO this order (other orders' refs pointing here via ref_order)
+export async function findLinkedOrders(orderId, orderRef) {
+  // Forward: get refs from this order's materials
+  const { data: myMats } = await supabase
+    .from('order_materials')
+    .select('id')
+    .eq('order_id', orderId);
+  const matIds = (myMats || []).map(m => m.id);
+
+  let forwardRefs = [];
+  if (matIds.length) {
+    const { data } = await supabase
+      .from('material_refs')
+      .select('ref_type, ref_order, ref_name, ref_code')
+      .in('material_id', matIds)
+      .not('ref_order', 'is', null);
+    forwardRefs = data || [];
+  }
+
+  // Reverse: find material_refs where ref_order matches this order's ref
+  const { data: reverseData } = await supabase
+    .from('material_refs')
+    .select('ref_order, material_id, order_materials!inner(order_id, supplier_orders!inner(id, order_type, order_ref, client_name, supplier_name, order_date, valore_residuo))')
+    .eq('ref_order', orderRef);
+
+  // Dedupe forward refs to unique order_refs
+  const forwardOrderRefs = [...new Set(forwardRefs.map(r => r.ref_order))];
+
+  // Resolve forward refs to actual orders
+  let forwardOrders = [];
+  if (forwardOrderRefs.length) {
+    const { data } = await supabase
+      .from('supplier_orders')
+      .select('id, order_type, order_ref, order_date, client_name, supplier_name, valore_residuo, peso_totale, tot_peso_res')
+      .in('order_ref', forwardOrderRefs);
+    forwardOrders = data || [];
+  }
+
+  // Extract reverse orders (dedupe)
+  const reverseMap = new Map();
+  for (const r of (reverseData || [])) {
+    const so = r.order_materials?.supplier_orders;
+    if (so && !reverseMap.has(so.id)) {
+      reverseMap.set(so.id, so);
+    }
+  }
+
+  return {
+    forward: forwardOrders,  // orders downstream (OV→OA/OP/OL)
+    reverse: [...reverseMap.values()],  // orders upstream (OA→OV)
+  };
+}
+
 // ── Load notes ───────────────────────────────────────────────
 export async function loadOrderNotes(orderType, orderRef) {
   let query = supabase.from('order_notes').select('*');

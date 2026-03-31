@@ -2,6 +2,7 @@ import { useState, useCallback, useMemo } from 'react';
 import { SupplierDataProvider, useSupplierData } from '../hooks/useSupplierData';
 import DeadlineDashboard from './supplier/DeadlineDashboard';
 import OrderList from './supplier/OrderList';
+import OrderMap from './supplier/OrderMap';
 import SupplierUpload from './supplier/SupplierUpload';
 
 const AUTH_KEY = 'sales_dashboard_auth';
@@ -14,6 +15,7 @@ const TABS = [
   { id: 'OP',       label: 'OP' },
   { id: 'OL',       label: 'OL' },
   { id: 'ACCIAIERIA', label: 'Acciaieria' },
+  { id: 'mappa',    label: 'Mappa' },
   { id: 'upload',   label: 'Upload' },
 ];
 
@@ -181,6 +183,7 @@ function MonitorContent() {
               {tab === 'OP' && <OrderList orderType="OP" highlightOrder={highlightOrder} />}
               {tab === 'OL' && <OrderList orderType="OL" highlightOrder={highlightOrder} />}
               {tab === 'ACCIAIERIA' && <OrderList orderType="ACCIAIERIA" highlightOrder={highlightOrder} />}
+              {tab === 'mappa' && <OrderMap onNavigateToOrder={handleNavigateToOrder} />}
               {tab === 'upload' && <SupplierUpload />}
             </div>
           </>
