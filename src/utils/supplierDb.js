@@ -110,59 +110,72 @@ export async function searchOrders(query) {
   return data;
 }
 
-// ── Find linked orders via refs ─────────────────────────────
-// Forward: refs FROM this order's materials (e.g. OV → OA/OP/OL)
-// Reverse: refs TO this order (other orders' refs pointing here via ref_order)
+// ── Find linked orders via refs (bidirectional) ─────────────
+// Forward: refs FROM this order's materials that have ref_order set
+// Reverse: refs in OTHER orders' materials where ref_order = this order's ref
+//
+// OV refs store ref_order = "OA/2026/..." (full downstream ref)
+// OA/OP/OL refs store ref_type = "OV"/"OL" but NO ref_order
+// So for an OA/OP/OL: forward refs won't have ref_order, but OV orders
+// that reference it WILL have ref_order matching this order_ref.
+// For an OV: forward refs have ref_order pointing to OA/OP/OL.
+
+const ORDER_SELECT = 'id, order_type, order_ref, order_date, client_name, supplier_name, valore_residuo, peso_totale, tot_peso_res';
+
 export async function findLinkedOrders(orderId, orderRef) {
-  // Forward: get refs from this order's materials
+  const linkedMap = new Map(); // id → order (deduped)
+
+  // 1. Forward: refs from this order's materials with ref_order set
   const { data: myMats } = await supabase
     .from('order_materials')
     .select('id')
     .eq('order_id', orderId);
   const matIds = (myMats || []).map(m => m.id);
 
-  let forwardRefs = [];
   if (matIds.length) {
-    const { data } = await supabase
+    const { data: fwdRefs } = await supabase
       .from('material_refs')
-      .select('ref_type, ref_order, ref_name, ref_code')
+      .select('ref_order')
       .in('material_id', matIds)
       .not('ref_order', 'is', null);
-    forwardRefs = data || [];
-  }
 
-  // Reverse: find material_refs where ref_order matches this order's ref
-  const { data: reverseData } = await supabase
-    .from('material_refs')
-    .select('ref_order, material_id, order_materials!inner(order_id, supplier_orders!inner(id, order_type, order_ref, client_name, supplier_name, order_date, valore_residuo))')
-    .eq('ref_order', orderRef);
-
-  // Dedupe forward refs to unique order_refs
-  const forwardOrderRefs = [...new Set(forwardRefs.map(r => r.ref_order))];
-
-  // Resolve forward refs to actual orders
-  let forwardOrders = [];
-  if (forwardOrderRefs.length) {
-    const { data } = await supabase
-      .from('supplier_orders')
-      .select('id, order_type, order_ref, order_date, client_name, supplier_name, valore_residuo, peso_totale, tot_peso_res')
-      .in('order_ref', forwardOrderRefs);
-    forwardOrders = data || [];
-  }
-
-  // Extract reverse orders (dedupe)
-  const reverseMap = new Map();
-  for (const r of (reverseData || [])) {
-    const so = r.order_materials?.supplier_orders;
-    if (so && !reverseMap.has(so.id)) {
-      reverseMap.set(so.id, so);
+    const fwdOrderRefs = [...new Set((fwdRefs || []).map(r => r.ref_order))];
+    if (fwdOrderRefs.length) {
+      const { data: fwdOrders } = await supabase
+        .from('supplier_orders')
+        .select(ORDER_SELECT)
+        .in('order_ref', fwdOrderRefs);
+      for (const o of (fwdOrders || [])) {
+        if (o.id !== orderId) linkedMap.set(o.id, o);
+      }
     }
   }
 
-  return {
-    forward: forwardOrders,  // orders downstream (OV→OA/OP/OL)
-    reverse: [...reverseMap.values()],  // orders upstream (OA→OV)
-  };
+  // 2. Reverse: other orders' refs that point to this order via ref_order
+  //    Also search with ACCIAIERIA prefix variant (ACCIAIERIA orders have
+  //    order_ref like "ACCIAIERIA/2026/..." but might be referenced as "OA/2026/...")
+  const refVariants = [orderRef];
+  if (orderRef.startsWith('ACCIAIERIA/')) {
+    refVariants.push('OA/' + orderRef.slice('ACCIAIERIA/'.length));
+  } else if (orderRef.startsWith('OA/')) {
+    refVariants.push('ACCIAIERIA/' + orderRef.slice('OA/'.length));
+  }
+
+  for (const ref of refVariants) {
+    const { data: revData } = await supabase
+      .from('material_refs')
+      .select('material_id, order_materials!inner(order_id, supplier_orders!inner(' + ORDER_SELECT + '))')
+      .eq('ref_order', ref);
+
+    for (const r of (revData || [])) {
+      const so = r.order_materials?.supplier_orders;
+      if (so && so.id !== orderId && !linkedMap.has(so.id)) {
+        linkedMap.set(so.id, so);
+      }
+    }
+  }
+
+  return [...linkedMap.values()];
 }
 
 // ── Load notes ───────────────────────────────────────────────

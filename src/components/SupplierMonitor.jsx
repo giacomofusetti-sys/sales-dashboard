@@ -38,12 +38,14 @@ function MonitorContent() {
   const { orders, materials, loading } = useSupplierData();
   const [tab, setTab] = useState('scadenze');
   const [highlightOrder, setHighlightOrder] = useState(null);
+  const [returnTo, setReturnTo] = useState(null); // tab to return to (e.g. 'mappa')
 
   const handleNavigateToOrder = useCallback((orderType, orderRef) => {
+    setReturnTo(tab); // remember where we came from
     setTab(orderType);
     setHighlightOrder(orderRef);
     setTimeout(() => setHighlightOrder(null), 3000);
-  }, []);
+  }, [tab]);
 
   const handleLogout = () => {
     sessionStorage.removeItem(AUTH_KEY);
@@ -111,7 +113,7 @@ function MonitorContent() {
                 const count = ORDER_TYPES.includes(t.id) ? orderCount(t.id) : null;
                 const badge = typeBadge[t.id];
                 return (
-                  <button key={t.id} onClick={() => setTab(t.id)}
+                  <button key={t.id} onClick={() => { setTab(t.id); setReturnTo(null); }}
                     style={{
                       display: 'flex', alignItems: 'center', gap: 5, padding: '9px 16px', border: 'none',
                       borderBottom: active ? '2px solid var(--accent)' : '2px solid transparent',
@@ -132,6 +134,19 @@ function MonitorContent() {
                 );
               })}
             </div>
+
+            {/* Return-to banner */}
+            {returnTo && (
+              <button onClick={() => { setTab(returnTo); setReturnTo(null); setHighlightOrder(null); }}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10,
+                  padding: '6px 12px', fontSize: 12, fontWeight: 500,
+                  background: 'var(--bg-subtle)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)',
+                  color: 'var(--accent)', cursor: 'pointer',
+                }}>
+                &larr; Torna a {TABS.find(t => t.id === returnTo)?.label || returnTo}
+              </button>
+            )}
 
             {/* Tab content */}
             <div style={{ background: 'var(--bg-card)', borderRadius: 'var(--radius-lg)', border: '1px solid var(--border)', padding: '20px 24px' }}>

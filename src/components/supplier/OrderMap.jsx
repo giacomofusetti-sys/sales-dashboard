@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { searchOrders, findLinkedOrders } from '../../utils/supplierDb';
 
-// ── Urgency color from deadline ──────────────────────────────
+// ── Urgency color from order date ────────────────────────────
 function deadlineDot(order) {
   const d = order.order_date;
   if (!d) return '#94A3B8';
@@ -13,19 +13,21 @@ function deadlineDot(order) {
   return '#94A3B8';
 }
 
-// ── Node layout constants ────────────────────────────────────
+// ── Layout constants ─────────────────────────────────────────
 const NODE_W = 240;
 const NODE_H = 90;
 const GAP_X = 80;
 const GAP_Y = 24;
 const PAD = 40;
 
-// ── Type labels ──────────────────────────────────────────────
+// Column order: OV (clients) on the left, then OA/ACCIAIERIA, then OP/OL on the right
+const COL_ORDER = ['OV', 'OA', 'ACCIAIERIA', 'OP', 'OL'];
+
 const TYPE_LABELS = {
-  OV: 'Ordine Vendita',
-  OA: 'Ordine Acquisto',
-  OP: 'Ordine Produzione',
-  OL: 'Ordine Lavorazione',
+  OV: 'Ordini Vendita',
+  OA: 'Ordini Acquisto',
+  OP: 'Ordini Produzione',
+  OL: 'Ordini Lavorazione',
   ACCIAIERIA: 'Acciaieria',
 };
 
@@ -41,8 +43,8 @@ export default function OrderMap({ onNavigateToOrder }) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
   const [searching, setSearching] = useState(false);
-  const [selected, setSelected] = useState(null); // the central order
-  const [links, setLinks] = useState(null); // { forward, reverse }
+  const [selected, setSelected] = useState(null);
+  const [linked, setLinked] = useState(null); // flat array of linked orders
   const [loadingLinks, setLoadingLinks] = useState(false);
   const searchTimeout = useRef(null);
 
@@ -75,28 +77,28 @@ export default function OrderMap({ onNavigateToOrder }) {
     setQuery('');
     setLoadingLinks(true);
     try {
-      const data = await findLinkedOrders(order.id, order.order_ref);
-      setLinks(data);
+      // Level 1: direct links
+      const level1 = await findLinkedOrders(order.id, order.order_ref);
 
-      // Recursively find forward links from forward orders (one more level)
-      const deepForward = [];
-      for (const fwd of data.forward) {
+      // Level 2: links from level 1 orders (one more hop)
+      const allIds = new Set([order.id, ...level1.map(o => o.id)]);
+      const level2 = [];
+      for (const l1 of level1) {
         try {
-          const sub = await findLinkedOrders(fwd.id, fwd.order_ref);
-          for (const sf of sub.forward) {
-            if (sf.id !== order.id && !data.forward.some(f => f.id === sf.id)) {
-              deepForward.push({ ...sf, _parentRef: fwd.order_ref });
+          const sub = await findLinkedOrders(l1.id, l1.order_ref);
+          for (const s of sub) {
+            if (!allIds.has(s.id)) {
+              allIds.add(s.id);
+              level2.push(s);
             }
           }
         } catch { /* skip */ }
       }
 
-      if (deepForward.length) {
-        setLinks(prev => prev ? { ...prev, deep: deepForward } : prev);
-      }
+      setLinked([...level1, ...level2]);
     } catch (err) {
       console.error('[OrderMap] link error:', err);
-      setLinks({ forward: [], reverse: [] });
+      setLinked([]);
     } finally {
       setLoadingLinks(false);
     }
@@ -125,7 +127,6 @@ export default function OrderMap({ onNavigateToOrder }) {
         />
         {searching && <span style={{ position: 'absolute', right: 14, top: 12, fontSize: 12, color: 'var(--text-tertiary)' }}>...</span>}
 
-        {/* Search results dropdown */}
         {results.length > 0 && (
           <div style={{
             position: 'absolute', top: '100%', left: 0, right: 0, maxWidth: 480,
@@ -139,10 +140,7 @@ export default function OrderMap({ onNavigateToOrder }) {
                   padding: '8px 14px', border: 'none', borderBottom: '1px solid var(--border)',
                   background: 'none', cursor: 'pointer', textAlign: 'left', fontSize: 13,
                 }}>
-                <span style={{
-                  fontSize: 9, fontWeight: 700, padding: '2px 5px', borderRadius: 3,
-                  background: TYPE_COLORS[o.order_type] || '#94A3B8', color: '#fff',
-                }}>{o.order_type}</span>
+                <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 5px', borderRadius: 3, background: TYPE_COLORS[o.order_type] || '#94A3B8', color: '#fff' }}>{o.order_type}</span>
                 <span style={{ fontFamily: 'var(--font-serif)', fontWeight: 600, color: 'var(--text-primary)' }}>{o.order_ref}</span>
                 <span style={{ fontSize: 12, color: 'var(--text-secondary)', flex: 1 }}>{o.client_name || o.supplier_name || ''}</span>
               </button>
@@ -151,10 +149,9 @@ export default function OrderMap({ onNavigateToOrder }) {
         )}
       </div>
 
-      {/* Selected order info */}
       {selected && !loadingLinks && (
         <div style={{ marginBottom: 8 }}>
-          <button onClick={() => { setSelected(null); setLinks(null); }}
+          <button onClick={() => { setSelected(null); setLinked(null); }}
             style={{ fontSize: 11, color: 'var(--text-tertiary)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, marginBottom: 8 }}>
             &larr; Nuova ricerca
           </button>
@@ -167,18 +164,14 @@ export default function OrderMap({ onNavigateToOrder }) {
         </div>
       )}
 
-      {/* Diagram */}
-      {selected && links && !loadingLinks && (
+      {selected && linked && !loadingLinks && (
         <FlowDiagram
           center={selected}
-          reverse={links.reverse}
-          forward={links.forward}
-          deep={links.deep || []}
+          linked={linked}
           onNodeClick={handleNodeClick}
         />
       )}
 
-      {/* Empty state */}
       {!selected && results.length === 0 && !searching && (
         <div style={{ textAlign: 'center', padding: '4rem 0', color: 'var(--text-tertiary)', fontSize: 13 }}>
           Cerca un ordine per visualizzare la catena di collegamento.
@@ -191,75 +184,60 @@ export default function OrderMap({ onNavigateToOrder }) {
   );
 }
 
-// ── Flow diagram with SVG ────────────────────────────────────
+// ── Flow diagram ─────────────────────────────────────────────
 
-function FlowDiagram({ center, reverse, forward, deep, onNodeClick }) {
-  const svgRef = useRef(null);
+function FlowDiagram({ center, linked, onNodeClick }) {
+  // Group all orders (center + linked) by type into columns
+  const allOrders = [center, ...linked];
+  const byType = {};
+  for (const o of allOrders) {
+    const t = o.order_type;
+    if (!byType[t]) byType[t] = [];
+    if (!byType[t].some(e => e.id === o.id)) byType[t].push(o);
+  }
 
-  // Build columns: [reverse] → [center] → [forward] → [deep]
+  // Build columns in supply-chain order, skip empty types
   const cols = [];
+  const colLabels = [];
+  for (const t of COL_ORDER) {
+    if (byType[t]?.length) {
+      cols.push(byType[t]);
+      colLabels.push(TYPE_LABELS[t] || t);
+    }
+  }
 
-  // Col 0: reverse (upstream, e.g. OV that references this OA)
-  if (reverse.length) cols.push(reverse);
+  if (cols.length === 0) {
+    cols.push([center]);
+    colLabels.push(TYPE_LABELS[center.order_type] || center.order_type);
+  }
 
-  // Col 1: center
-  const centerColIdx = cols.length;
-  cols.push([center]);
-
-  // Col 2: forward (downstream, e.g. OA/OP/OL referenced by OV)
-  if (forward.length) cols.push(forward);
-
-  // Col 3: deep (further downstream)
-  if (deep.length) cols.push(deep);
-
-  // Calculate SVG dimensions
+  // Calculate dimensions
   const maxRows = Math.max(...cols.map(c => c.length));
   const svgW = cols.length * (NODE_W + GAP_X) - GAP_X + PAD * 2;
   const svgH = maxRows * (NODE_H + GAP_Y) - GAP_Y + PAD * 2;
 
-  // Position each node
-  const nodePositions = new Map(); // orderId → { x, y, order }
+  // Position nodes
+  const nodePos = new Map();
   cols.forEach((col, ci) => {
     const colX = PAD + ci * (NODE_W + GAP_X);
     const totalH = col.length * (NODE_H + GAP_Y) - GAP_Y;
     const startY = PAD + (maxRows * (NODE_H + GAP_Y) - GAP_Y - totalH) / 2;
     col.forEach((order, ri) => {
-      nodePositions.set(order.id, {
-        x: colX,
-        y: startY + ri * (NODE_H + GAP_Y),
-        order,
-        colIdx: ci,
-      });
+      nodePos.set(order.id, { x: colX, y: startY + ri * (NODE_H + GAP_Y), order, colIdx: ci });
     });
   });
 
-  // Build edges
+  // Build edges: connect nodes in adjacent columns
+  // All nodes in column N connect to all nodes in column N+1
+  // (they're linked via the ref chain)
   const edges = [];
-
-  // Center → forward
-  if (forward.length) {
-    const cp = nodePositions.get(center.id);
-    for (const fwd of forward) {
-      const fp = nodePositions.get(fwd.id);
-      if (cp && fp) edges.push({ from: cp, to: fp });
-    }
-  }
-
-  // Reverse → center
-  for (const rev of reverse) {
-    const rp = nodePositions.get(rev.id);
-    const cp = nodePositions.get(center.id);
-    if (rp && cp) edges.push({ from: rp, to: cp });
-  }
-
-  // Forward → deep
-  for (const d of deep) {
-    const parentRef = d._parentRef;
-    const parent = forward.find(f => f.order_ref === parentRef);
-    if (parent) {
-      const pp = nodePositions.get(parent.id);
-      const dp = nodePositions.get(d.id);
-      if (pp && dp) edges.push({ from: pp, to: dp });
+  for (let ci = 0; ci < cols.length - 1; ci++) {
+    for (const left of cols[ci]) {
+      for (const right of cols[ci + 1]) {
+        const lp = nodePos.get(left.id);
+        const rp = nodePos.get(right.id);
+        if (lp && rp) edges.push({ from: lp, to: rp });
+      }
     }
   }
 
@@ -267,22 +245,20 @@ function FlowDiagram({ center, reverse, forward, deep, onNodeClick }) {
     <div style={{ overflowX: 'auto', background: 'var(--bg-subtle)', borderRadius: 'var(--radius-lg)', border: '1px solid var(--border)', padding: 4 }}>
       {/* Column headers */}
       <div style={{ display: 'flex', gap: GAP_X, paddingLeft: PAD, paddingTop: 12, paddingBottom: 4 }}>
-        {cols.map((col, ci) => {
-          const isCenter = ci === centerColIdx;
-          const label = isCenter ? 'Selezionato'
-            : ci < centerColIdx ? 'A monte'
-            : ci === centerColIdx + 1 ? 'A valle'
-            : 'Lavorazioni';
-          return (
-            <div key={ci} style={{ width: NODE_W, fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--text-tertiary)', textAlign: 'center' }}>
-              {label}
-            </div>
-          );
-        })}
+        {colLabels.map((label, ci) => (
+          <div key={ci} style={{ width: NODE_W, fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--text-tertiary)', textAlign: 'center' }}>
+            {label}
+          </div>
+        ))}
       </div>
 
-      <svg ref={svgRef} width={svgW} height={svgH} style={{ display: 'block' }}>
-        {/* Edges */}
+      <svg width={svgW} height={svgH} style={{ display: 'block' }}>
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth={8} markerHeight={8} orient="auto">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#CBD5E1" />
+          </marker>
+        </defs>
+
         {edges.map((e, i) => {
           const x1 = e.from.x + NODE_W;
           const y1 = e.from.y + NODE_H / 2;
@@ -292,22 +268,16 @@ function FlowDiagram({ center, reverse, forward, deep, onNodeClick }) {
           return (
             <path key={i}
               d={`M ${x1} ${y1} C ${cx} ${y1}, ${cx} ${y2}, ${x2} ${y2}`}
-              fill="none" stroke="#CBD5E1" strokeWidth={1.5}
-              markerEnd="url(#arrow)"
+              fill="none" stroke="#CBD5E1" strokeWidth={1.5} markerEnd="url(#arrow)"
             />
           );
         })}
 
-        {/* Arrow marker */}
-        <defs>
-          <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth={8} markerHeight={8} orient="auto">
-            <path d="M 0 0 L 10 5 L 0 10 z" fill="#CBD5E1" />
-          </marker>
-        </defs>
-
-        {/* Nodes */}
-        {[...nodePositions.entries()].map(([id, pos]) => (
-          <OrderNode key={id} x={pos.x} y={pos.y} order={pos.order} isCenter={pos.colIdx === centerColIdx} onClick={() => onNodeClick(pos.order)} />
+        {[...nodePos.entries()].map(([id, pos]) => (
+          <OrderNode key={id} x={pos.x} y={pos.y} order={pos.order}
+            isCenter={pos.order.id === center.id}
+            onClick={() => onNodeClick(pos.order)}
+          />
         ))}
       </svg>
 
@@ -320,6 +290,12 @@ function FlowDiagram({ center, reverse, forward, deep, onNodeClick }) {
           </span>
         ))}
       </div>
+
+      {linked.length === 0 && (
+        <div style={{ textAlign: 'center', padding: '12px 0', fontSize: 12, color: 'var(--text-tertiary)' }}>
+          Nessun collegamento trovato per questo ordine.
+        </div>
+      )}
     </div>
   );
 }
@@ -334,7 +310,6 @@ function OrderNode({ x, y, order, isCenter, onClick }) {
 
   return (
     <g style={{ cursor: 'pointer' }} onClick={onClick}>
-      {/* Background */}
       <rect x={x} y={y} width={NODE_W} height={NODE_H} rx={8} ry={8}
         fill="#fff" stroke={isCenter ? color : '#E2E8F0'} strokeWidth={isCenter ? 2 : 1}
       />
