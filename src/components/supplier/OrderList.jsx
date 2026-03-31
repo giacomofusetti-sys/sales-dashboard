@@ -183,7 +183,7 @@ export default function OrderList({ orderType, highlightOrder }) {
                             const daysUntil = effectiveDate ? Math.ceil((new Date(effectiveDate) - new Date()) / 86400000) : null;
 
                             return (
-                              <tr key={mat.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                              <tr key={mat.id} style={{ borderBottom: '1px solid var(--border)', background: deadlineRowBg(mat) }}>
                                 {orderType === 'OL' && <td style={tdStyle}>{mat.pos || '—'}</td>}
                                 <td style={{ ...tdStyle, fontFamily: 'var(--font-serif)' }}>
                                   {mat.scadenza ? new Date(mat.scadenza).toLocaleDateString('it-IT') : '—'}
@@ -333,6 +333,17 @@ function NotesSection({ notes, onAdd, onEdit, onDelete }) {
 function fmtNum(v) {
   if (v == null) return '—';
   return v.toLocaleString('it-IT', { maximumFractionDigits: 2 });
+}
+
+function deadlineRowBg(mat) {
+  const dateStr = mat.scadenza_effettiva || mat.scadenza;
+  if (!dateStr) return undefined;
+  const days = Math.ceil((new Date(dateStr) - new Date()) / 86400000);
+  if (days < 0) return '#FEE2E2';   // scaduto — rosso chiaro
+  if (days <= 3) return '#FFEDD5';   // entro 3gg — arancio chiaro
+  if (days <= 7) return '#FEF9C3';   // entro 7gg — giallo chiaro
+  if (days <= 14) return '#DCFCE7';  // entro 14gg — verde chiaro
+  return undefined;
 }
 
 const thStyle = { textAlign: 'left', padding: '6px 8px', fontSize: 10, fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.5px', whiteSpace: 'nowrap' };
