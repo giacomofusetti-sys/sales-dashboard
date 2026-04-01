@@ -14,7 +14,7 @@ export async function loadBudgetFromDB() {
     .select('*')
     .order('ragione');
   if (error) throw error;
-  return data.map(dbToCustomer);
+  return data.map(dbToCustomer);1
 }
 
 export async function saveBudgetToDB(customers) {

@@ -110,22 +110,22 @@ export async function searchOrders(query) {
   return data;
 }
 
-// ── Find linked orders via refs (bidirectional) ─────────────
-// Forward: refs FROM this order's materials that have ref_order set
-// Reverse: refs in OTHER orders' materials where ref_order = this order's ref
-//
-// OV refs store ref_order = "OA/2026/..." (full downstream ref)
-// OA/OP/OL refs store ref_type = "OV"/"OL" but NO ref_order
-// So for an OA/OP/OL: forward refs won't have ref_order, but OV orders
-// that reference it WILL have ref_order matching this order_ref.
-// For an OV: forward refs have ref_order pointing to OA/OP/OL.
+// ── Find linked orders via refs (bidirectional, hybrid) ─────
+// Forward strategy depends on ref_type:
+//   - ref_type "F" (inside OV) → ref_order is reliable (points to OA/OP/OL)
+//   - ref_type "OV"/"OL"/"BPV" (inside OA/OP) → ref_order is an internal
+//     number that does NOT match actual order_ref values in the DB.
+//     Instead, match by ref_name → supplier_orders.client_name.
+// Reverse: other orders' refs that point to this order via ref_order
+//   (OV orders reference OA/OP/OL with correct ref_order values)
 
 const ORDER_SELECT = 'id, order_type, order_ref, order_date, client_name, supplier_name, valore_residuo, peso_totale, tot_peso_res';
+const NAME_MATCH_REF_TYPES = new Set(['OV', 'OL', 'BPV']);
 
 export async function findLinkedOrders(orderId, orderRef) {
   const linkedMap = new Map(); // id → order (deduped)
 
-  // 1. Forward: refs from this order's materials with ref_order set
+  // 1. Forward: refs from this order's materials
   const { data: myMats } = await supabase
     .from('order_materials')
     .select('id')
@@ -135,18 +135,49 @@ export async function findLinkedOrders(orderId, orderRef) {
   if (matIds.length) {
     const { data: fwdRefs } = await supabase
       .from('material_refs')
-      .select('ref_order')
-      .in('material_id', matIds)
-      .not('ref_order', 'is', null);
+      .select('ref_type, ref_order, ref_name')
+      .in('material_id', matIds);
 
-    const fwdOrderRefs = [...new Set((fwdRefs || []).map(r => r.ref_order))];
-    if (fwdOrderRefs.length) {
+    // 1a. Reliable ref_order refs (type "F" or any non-name-match type with ref_order)
+    const reliableOrderRefs = [...new Set(
+      (fwdRefs || [])
+        .filter(r => r.ref_order && !NAME_MATCH_REF_TYPES.has(r.ref_type))
+        .map(r => r.ref_order)
+    )];
+    if (reliableOrderRefs.length) {
       const { data: fwdOrders } = await supabase
         .from('supplier_orders')
         .select(ORDER_SELECT)
-        .in('order_ref', fwdOrderRefs);
+        .in('order_ref', reliableOrderRefs);
       for (const o of (fwdOrders || [])) {
         if (o.id !== orderId) linkedMap.set(o.id, o);
+      }
+    }
+
+    // 1b. Name-based matching for OV/OL/BPV refs (ref_order unreliable)
+    //     Use ref_name to find orders of the target type by client_name
+    const nameRefs = (fwdRefs || []).filter(r => r.ref_name && NAME_MATCH_REF_TYPES.has(r.ref_type));
+    const namesByType = new Map(); // ref_type → Set of name keywords
+    for (const r of nameRefs) {
+      if (!namesByType.has(r.ref_type)) namesByType.set(r.ref_type, new Set());
+      // Extract first keyword (longest word) from ref_name for ILIKE search
+      const keyword = r.ref_name.trim().split(/\s+/).sort((a, b) => b.length - a.length)[0];
+      if (keyword && keyword.length >= 3) {
+        namesByType.get(r.ref_type).add(keyword.toUpperCase());
+      }
+    }
+
+    for (const [refType, keywords] of namesByType) {
+      for (const kw of keywords) {
+        const { data: nameOrders } = await supabase
+          .from('supplier_orders')
+          .select(ORDER_SELECT)
+          .eq('order_type', refType)
+          .ilike('client_name', `%${kw}%`)
+          .limit(20);
+        for (const o of (nameOrders || [])) {
+          if (o.id !== orderId) linkedMap.set(o.id, o);
+        }
       }
     }
   }
