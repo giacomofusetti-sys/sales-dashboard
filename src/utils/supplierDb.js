@@ -11,16 +11,32 @@ export async function loadSupplierOrders(orderType) {
   return data;
 }
 
-// ── Load materials for an order ──────────────────────────────
+// ── Load materials for orders (paginated to avoid Supabase 1000-row default) ─
 export async function loadOrderMaterials(orderIds) {
   if (!orderIds.length) return [];
-  const { data, error } = await supabase
-    .from('order_materials')
-    .select('*')
-    .in('order_id', orderIds)
-    .order('pos');
-  if (error) throw error;
-  return data;
+  const PAGE = 1000;
+  const CHUNK = 200; // max IDs per .in() filter
+  const all = [];
+
+  for (let c = 0; c < orderIds.length; c += CHUNK) {
+    const idChunk = orderIds.slice(c, c + CHUNK);
+    let from = 0;
+    while (true) {
+      const { data, error } = await supabase
+        .from('order_materials')
+        .select('*')
+        .in('order_id', idChunk)
+        .order('pos')
+        .range(from, from + PAGE - 1);
+      if (error) throw error;
+      all.push(...data);
+      if (data.length < PAGE) break; // no more rows
+      from += PAGE;
+    }
+  }
+
+  console.log(`[loadOrderMaterials] ${orderIds.length} orders → ${all.length} materials`);
+  return all;
 }
 
 // ── Deadline helpers ─────────────────────────────────────────
@@ -56,18 +72,29 @@ export async function countDeadlines(fromStr, toStr) {
   return count ?? 0;
 }
 
-// Load deadline detail rows for a date range (limited to 500 per page)
-export async function loadDeadlineRows(fromStr, toStr, { page = 0, pageSize = 500 } = {}) {
+// Load ALL deadline detail rows for a date range (paginated to avoid row limits)
+export async function loadDeadlineRows(fromStr, toStr) {
   const filter = deadlineRangeFilter(fromStr, toStr);
-  let query = supabase
-    .from('order_materials')
-    .select('*, supplier_orders!inner(order_type, order_ref, client_name, supplier_name)')
-    .not('scadenza', 'is', null);
-  if (filter) query = query.or(filter);
-  query = query.order('scadenza').range(page * pageSize, (page + 1) * pageSize - 1);
-  const { data, error } = await query;
-  if (error) throw error;
-  return data;
+  const PAGE = 1000;
+  const all = [];
+  let from = 0;
+
+  while (true) {
+    let query = supabase
+      .from('order_materials')
+      .select('*, supplier_orders!inner(order_type, order_ref, client_name, supplier_name)')
+      .not('scadenza', 'is', null);
+    if (filter) query = query.or(filter);
+    query = query.order('scadenza').range(from, from + PAGE - 1);
+    const { data, error } = await query;
+    if (error) throw error;
+    all.push(...data);
+    if (data.length < PAGE) break;
+    from += PAGE;
+  }
+
+  console.log(`[loadDeadlineRows] range ${fromStr}..${toStr}: ${all.length} rows`);
+  return all;
 }
 
 // ── Load refs for a single order's materials ────────────────

@@ -104,7 +104,13 @@ export default function OrderList({ orderType, highlightOrder }) {
               }}>
               {/* Order header */}
               <button
-                onClick={() => { if (!isExpanded) fetchRefs(order.id); setExpandedOrder(isExpanded ? null : order.id); }}
+                onClick={() => {
+                  if (!isExpanded) {
+                    fetchRefs(order.id);
+                    console.log(`[OrderList] expand ${order.order_ref} (id=${order.id}): ${mats.length} materials in memory`);
+                  }
+                  setExpandedOrder(isExpanded ? null : order.id);
+                }}
                 style={{
                   width: '100%', display: 'flex', alignItems: 'center', gap: 12,
                   padding: '10px 14px', border: 'none', background: isExpanded ? 'var(--bg-subtle)' : 'var(--bg-card)',

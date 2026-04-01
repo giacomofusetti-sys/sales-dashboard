@@ -226,7 +226,7 @@ export default function DeadlineDashboard({ onNavigateToOrder }) {
       {/* View toggle */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
         <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>
-          {loadingRows ? 'Caricamento...' : `${filteredRows.length} materiali`}{filteredRows.length !== rows.length && ` (filtrati da ${rows.length})`}{rows.length >= 500 && ' (max 500)'}
+          {loadingRows ? 'Caricamento...' : `${filteredRows.length} materiali`}{filteredRows.length !== rows.length && ` (filtrati da ${rows.length})`}
         </div>
         <button onClick={() => setGroupBySupplier(p => !p)}
           style={{ fontSize: 11, padding: '4px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', background: groupBySupplier ? 'var(--bg-subtle)' : 'var(--bg-card)', color: 'var(--text-secondary)', cursor: 'pointer' }}>
