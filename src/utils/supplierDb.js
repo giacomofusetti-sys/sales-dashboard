@@ -181,28 +181,38 @@ export async function findLinkedOrders(orderId, orderRef) {
 
     // 1b. Name-based matching for OV/OL/BPV refs (ref_order unreliable)
     //     Use ref_name to find orders of the target type by client_name
-    const nameRefs = (fwdRefs || []).filter(r => r.ref_name && NAME_MATCH_REF_TYPES.has(r.ref_type));
-    const namesByType = new Map(); // ref_type → Set of name keywords
+    //     If no match found and ref has ref_order or ref_name, create ghost node
+    const nameRefs = (fwdRefs || []).filter(r => NAME_MATCH_REF_TYPES.has(r.ref_type) && (r.ref_name || r.ref_order));
+    // Group by unique ref identity (ref_order or ref_name) to avoid duplicate ghosts
+    const nameRefEntries = []; // { ref, keyword, refType }
+    const seenNameRefs = new Set();
     for (const r of nameRefs) {
-      if (!namesByType.has(r.ref_type)) namesByType.set(r.ref_type, new Set());
-      // Extract first keyword (longest word) from ref_name for ILIKE search
-      const keyword = r.ref_name.trim().split(/\s+/).sort((a, b) => b.length - a.length)[0];
-      if (keyword && keyword.length >= 3) {
-        namesByType.get(r.ref_type).add(keyword.toUpperCase());
-      }
+      const key = r.ref_order || r.ref_name;
+      if (seenNameRefs.has(key)) continue;
+      seenNameRefs.add(key);
+      const keyword = r.ref_name
+        ? r.ref_name.trim().split(/\s+/).sort((a, b) => b.length - a.length)[0]?.toUpperCase()
+        : null;
+      nameRefEntries.push({ ref: r, keyword: keyword && keyword.length >= 3 ? keyword : null });
     }
 
-    for (const [refType, keywords] of namesByType) {
-      for (const kw of keywords) {
+    for (const entry of nameRefEntries) {
+      let found = false;
+      if (entry.keyword) {
         const { data: nameOrders } = await supabase
           .from('supplier_orders')
           .select(ORDER_SELECT)
-          .eq('order_type', refType)
-          .ilike('client_name', `%${kw}%`)
+          .eq('order_type', entry.ref.ref_type)
+          .ilike('client_name', `%${entry.keyword}%`)
           .limit(20);
         for (const o of (nameOrders || [])) {
-          if (o.id !== orderId) linkedMap.set(o.id, o);
+          if (o.id !== orderId) { linkedMap.set(o.id, o); found = true; }
         }
+      }
+      // Ghost node if nothing found and we have a ref_order to display
+      if (!found && entry.ref.ref_order) {
+        const ghost = makeGhostOrder(entry.ref.ref_order);
+        linkedMap.set(ghost.id, ghost);
       }
     }
   }
