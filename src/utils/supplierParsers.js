@@ -426,27 +426,33 @@ export function parseOL(lines) {
 export function detectPdfType(lines, filename) {
   const fname = (filename || '').toLowerCase();
 
-  // 1. Filename is the most reliable source — titles are ambiguous across types
+  // 1. New SOG filename convention (most reliable)
+  //    g22 → OV, g04 → OL, g00 → MIXED (OA+OP+Acciaieria)
+  if (/g22/i.test(fname)) return 'OV';
+  if (/g04/i.test(fname)) return 'OL';
+  if (/g00/i.test(fname)) return 'MIXED';
+
+  // 2. Legacy filename patterns (backward compat)
   if (fname.includes('acciaieria')) return 'ACCIAIERIA';
   if (fname.includes('_ol') || fname.includes('ol_')) return 'OL';
   if (fname.includes('_op') || fname.includes('op_')) return 'OP';
 
-  // 2. Content-based detection for OV vs OA (these have distinct titles)
+  // 3. Content-based detection for OV vs OA (these have distinct titles)
   for (const line of lines.slice(0, 10)) {
     if (/Lista ordini OV in scadenza/i.test(line)) return 'OV';
     if (/Lista ordini OL in scadenza/i.test(line)) return 'OL';
   }
 
-  // 3. For "Lista ordini OA in scadenza" — check if it's actually OP (headers start with *OP/)
+  // 4. For "Lista ordini OA in scadenza" — check if it's actually OP (headers start with *OP/)
   const first50 = lines.slice(0, 50);
   if (first50.some(l => /^\*?OP\/\d{4}\/\d{7}/.test(l))) return 'OP';
 
-  // 4. Title says OA and no OP headers found → genuine OA
+  // 5. Title says OA and no OP headers found → genuine OA
   for (const line of lines.slice(0, 10)) {
     if (/Lista ordini OA in scadenza/i.test(line)) return 'OA';
   }
 
-  // 5. Fallback: check first order header
+  // 6. Fallback: check first order header
   for (const line of first50) {
     if (/^OV\//.test(line)) return 'OV';
     if (/^\*?OP\//.test(line)) return 'OP';
@@ -454,11 +460,40 @@ export function detectPdfType(lines, filename) {
     if (/^OA\//.test(line)) return 'OA';
   }
 
-  // 6. Last resort: filename patterns
+  // 7. Last resort: filename patterns
   if (fname.includes('oa')) return 'OA';
   if (fname.includes('ov') || fname.includes('cliente')) return 'OV';
 
   return null;
+}
+
+/** Classify orders from a mixed g00 file into OA/OP/ACCIAIERIA.
+ *  - orderRef starts with "OP/" → OP
+ *  - orderRef starts with "OA/" and ALL materials have codiceProdotto starting with "M#T" → ACCIAIERIA
+ *  - otherwise → OA
+ *  Returns { OA: [...], OP: [...], ACCIAIERIA: [...] } */
+export function classifyMixedOrders(orders) {
+  const grouped = { OA: [], OP: [], ACCIAIERIA: [] };
+
+  for (const order of orders) {
+    if (order.orderRef.startsWith('OP/') || order.orderRef.startsWith('*OP/')) {
+      // Ensure orderRef is clean (without leading *)
+      order.orderRef = order.orderRef.replace(/^\*/, '');
+      grouped.OP.push(order);
+    } else if (
+      order.materials.length > 0 &&
+      order.materials.every(m => m.codiceProdotto && /^M#T/i.test(m.codiceProdotto))
+    ) {
+      // All materials are M#T* → ACCIAIERIA
+      // Rewrite orderRef: OA/2026/... → ACCIAIERIA/2026/...
+      order.orderRef = order.orderRef.replace(/^OA\//, 'ACCIAIERIA/');
+      grouped.ACCIAIERIA.push(order);
+    } else {
+      grouped.OA.push(order);
+    }
+  }
+
+  return grouped;
 }
 
 /** Parse lines based on detected or forced type */
@@ -469,6 +504,7 @@ export function parseByType(lines, type) {
     case 'OP': return parseOAOP(lines, 'OP');
     case 'ACCIAIERIA': return parseOAOP(lines, 'ACCIAIERIA');
     case 'OL': return parseOL(lines);
+    case 'MIXED': return parseOAOP(lines); // no forceType — classify later
     default: throw new Error(`Tipo PDF sconosciuto: ${type}`);
   }
 }

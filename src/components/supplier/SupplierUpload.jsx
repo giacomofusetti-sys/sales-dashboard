@@ -1,14 +1,12 @@
 import { useState, useRef } from 'react';
 import { useSupplierData } from '../../hooks/useSupplierData';
 import { extractPdfLines } from '../../utils/pdfExtract';
-import { detectPdfType, parseByType } from '../../utils/supplierParsers';
+import { detectPdfType, parseByType, classifyMixedOrders } from '../../utils/supplierParsers';
 
-const ORDER_TYPES = [
-  { id: 'OV', label: 'OV — Ordini Vendita Cliente', file: 'ordini_scadenza_cliente.pdf' },
-  { id: 'OA', label: 'OA — Ordini di Acquisto', file: 'ordini_OA__in_scadenza.pdf' },
-  { id: 'OP', label: 'OP — Ordini di Produzione', file: 'ordini_in_scadenza__OP__in_scadenza.pdf' },
-  { id: 'OL', label: 'OL — Ordini di Lavorazione', file: 'ordini__OL_in_scadenza.pdf' },
-  { id: 'ACCIAIERIA', label: 'Acciaieria', file: 'ordini_acciaieria__in_scadenza.pdf' },
+const FILE_TYPES = [
+  { id: 'OV', label: 'OV — Ordini Vendita', file: 'SOG_OrdScadG22' },
+  { id: 'OL', label: 'OL — Ordini Lavorazione', file: 'SOG_OrdScadG04' },
+  { id: 'MIXED', label: 'OA + OP + Acciaieria', file: 'sog_ordscadg00' },
 ];
 
 export default function SupplierUpload() {
@@ -46,18 +44,42 @@ export default function SupplierUpload() {
         // Parse
         const parsed = parseByType(lines, type);
         console.log(`[SupplierUpload] parsed ${parsed.length} orders, first orderRef:`, parsed[0]?.orderRef);
-        const totalMats = parsed.reduce((s, o) => s + (o.materials?.length || 0), 0);
-        const totalRefs = parsed.reduce((s, o) => s + o.materials?.reduce((s2, m) => s2 + (m.refs?.length || 0), 0) || 0, 0);
 
-        // Import to DB
-        const result = await importData(type, parsed);
-        newResults.push({
-          file: file.name,
-          type,
-          orders: result.totalOrders,
-          materials: result.totalMaterials,
-          refs: result.totalRefs,
-        });
+        if (type === 'MIXED') {
+          // Classify each order and import by type
+          const grouped = classifyMixedOrders(parsed);
+          const breakdown = [];
+          let totalOrders = 0, totalMaterials = 0, totalRefs = 0;
+
+          for (const subType of ['OA', 'OP', 'ACCIAIERIA']) {
+            const subOrders = grouped[subType];
+            if (!subOrders.length) continue;
+            const result = await importData(subType, subOrders);
+            totalOrders += result.totalOrders;
+            totalMaterials += result.totalMaterials;
+            totalRefs += result.totalRefs;
+            breakdown.push({ type: subType, orders: result.totalOrders });
+          }
+
+          newResults.push({
+            file: file.name,
+            type: 'MIXED',
+            orders: totalOrders,
+            materials: totalMaterials,
+            refs: totalRefs,
+            breakdown,
+          });
+        } else {
+          // Single-type file
+          const result = await importData(type, parsed);
+          newResults.push({
+            file: file.name,
+            type,
+            orders: result.totalOrders,
+            materials: result.totalMaterials,
+            refs: result.totalRefs,
+          });
+        }
       } catch (err) {
         console.error('[SupplierUpload]', err);
         newResults.push({ file: file.name, error: err.message });
@@ -130,9 +152,9 @@ export default function SupplierUpload() {
 
       {/* File reference */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
-        {ORDER_TYPES.map(t => (
+        {FILE_TYPES.map(t => (
           <span key={t.id} style={{ fontSize: 11, padding: '3px 8px', borderRadius: 'var(--radius-sm)', background: 'var(--bg-subtle)', border: '1px solid var(--border)', color: 'var(--text-tertiary)' }}>
-            {t.id}: {t.file}
+            {t.label}: {t.file}
           </span>
         ))}
       </div>
@@ -150,6 +172,13 @@ export default function SupplierUpload() {
               <strong>{r.file}</strong>
               {r.error ? (
                 <span style={{ color: 'var(--red)', marginLeft: 8 }}>{r.error}</span>
+              ) : r.breakdown ? (
+                <span style={{ color: 'var(--green)', marginLeft: 8 }}>
+                  {r.breakdown.map(b => `${b.type} — ${b.orders}`).join(', ')} ordini
+                  <span style={{ color: 'var(--text-tertiary)', marginLeft: 6, fontSize: 12 }}>
+                    ({r.materials} materiali, {r.refs} rif.)
+                  </span>
+                </span>
               ) : (
                 <span style={{ color: 'var(--green)', marginLeft: 8 }}>
                   {r.type} — {r.orders} ordini, {r.materials} materiali, {r.refs} riferimenti
