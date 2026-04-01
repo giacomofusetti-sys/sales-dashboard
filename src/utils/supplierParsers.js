@@ -28,6 +28,13 @@ export function parseDateDDMMYYYY(s) {
 // Product code pattern: prefix + # + suffix
 const PRODUCT_CODE_RE = /^[A-Z0-9]{1,5}#[A-Z0-9]+$/;
 
+/** Build a normalized ref_order from type + year + number.
+ *  OV uses 5-digit padding, OA/OP/OL use 7-digit padding. */
+function buildRefOrder(type, year, num) {
+  const padLen = type === 'OV' ? 5 : 7;
+  return `${type}/${year}/${num.padStart(padLen, '0')}`;
+}
+
 // ── OV Parser ─────────────────────────────────────────────────
 
 const OV_HEADER_RE = /^(OV\/\d{4}\/\d{5})\s*-\s*(.*)/;
@@ -161,7 +168,7 @@ export function parseOV(lines) {
 
 const OAOP_HEADER_RE = /^\*?(OA|OP)\/(\d{4}\/\d{7})\s+(\d{2}\/\d{2}\/\d{2})\s*F\s+(\d+)\s+(.*)/;
 const OAOP_MATERIAL_RE = /^(\d{2}\/\d{2}\/\d{2})\s+([A-Z0-9]{1,5}#[A-Z0-9]+)\s+(.*)/;
-const OAOP_REF_RE = /^(OV|OL|BPV)[.\s]\d{4}[.\s]\d+\s+(.+?)\s+(\d{2}\/\d{2}\/\d{2})\s+([\d.,]+)/;
+const OAOP_REF_RE = /^(OV|OL|BPV)[.\s](\d{4})[.\s](\d+)\s+(.+?)\s+(\d{2}\/\d{2}\/\d{2})\s+([\d.,]+)/;
 const OAOP_FOOTER_RE = /^Tot\.\s*peso\s*res\.\s*([\d.,]+)/i;
 
 export function parseOAOP(lines, forceType) {
@@ -241,9 +248,10 @@ export function parseOAOP(lines, forceType) {
     if (rm && currentMat) {
       currentMat.refs.push({
         refType: rm[1],
-        refName: rm[2].trim(),
-        refDate: parseDateDDMMYY(rm[3]),
-        refQty: parseItalianNumber(rm[4]),
+        refOrder: buildRefOrder(rm[1], rm[2], rm[3]),
+        refName: rm[4].trim(),
+        refDate: parseDateDDMMYY(rm[5]),
+        refQty: parseItalianNumber(rm[6]),
       });
     }
   }
@@ -262,7 +270,7 @@ const OL_REF_ONLY_RE = /^(OL\/\d{4}\/\d{7})\s*$/;
 const OL_SUPPLIER_RE = /^(\d{2}\/\d{2}\/\d{2})\s+F\s+(\d+)\s+(.*)/;
 const OL_POS_RE = /^Pos\.\s+(\d+)\s+(\d{2}\/\d{2}\/\d{2})\s+(\S+)\s+(.*)/;
 const OL_MATERIAL_RE = /^([A-Z0-9]{1,5}#[A-Z0-9]+)\s+(.*)/;
-const OL_REF_RE = /^(OV|OL|BPV)[.\s]\d{4}[.\s]\d+\s+(.+?)\s+(\d{2}\/\d{2}\/\d{2})\s+([\d.,]+)/;
+const OL_REF_RE = /^(OV|OL|BPV)[.\s](\d{4})[.\s](\d+)\s+(.+?)\s+(\d{2}\/\d{2}\/\d{2})\s+([\d.,]+)/;
 
 function buildOlOrder(orderRef, dateStr, supplierCode, rest) {
   const order = {
@@ -401,9 +409,10 @@ export function parseOL(lines) {
     if (refm && currentMat) {
       currentMat.refs.push({
         refType: refm[1],
-        refName: refm[2].trim(),
-        refDate: parseDateDDMMYY(refm[3]),
-        refQty: parseItalianNumber(refm[4]),
+        refOrder: buildRefOrder(refm[1], refm[2], refm[3]),
+        refName: refm[4].trim(),
+        refDate: parseDateDDMMYY(refm[5]),
+        refQty: parseItalianNumber(refm[6]),
       });
     }
   }
