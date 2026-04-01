@@ -82,11 +82,11 @@ export function SupplierDataProvider({ children }) {
   }, [refs]);
 
   // Import parsed PDF data
-  const importData = useCallback(async (orderType, parsedOrders) => {
+  const importData = useCallback(async (orderType, parsedOrders, onProgress) => {
     setImporting(true);
     try {
       console.log(`[importData] importing ${parsedOrders.length} orders as type="${orderType}"`);
-      const result = await importParsedOrders(orderType, parsedOrders);
+      const result = await importParsedOrders(orderType, parsedOrders, onProgress);
       console.log(`[importData] import done:`, result);
 
       // Reload affected type

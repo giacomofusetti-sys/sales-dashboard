@@ -290,104 +290,151 @@ export async function updateScadenzaEffettiva(materialId, date) {
   if (error) throw error;
 }
 
-// ── Import parsed data (upsert orders + materials + refs) ────
-export async function importParsedOrders(orderType, parsedOrders) {
+// ── Import parsed data (batch upsert orders + materials + refs) ──
+
+const BATCH_ORDERS = 50;
+const BATCH_MATERIALS = 200;
+const BATCH_REFS = 500;
+
+function toOrderRow(orderType, order) {
+  return {
+    order_type: orderType,
+    order_ref: order.orderRef,
+    order_date: order.orderDate || null,
+    client_code: order.clientCode || null,
+    client_name: order.clientName || null,
+    client_ref: order.clientRef || null,
+    valore_residuo: order.valoreResiduo || null,
+    peso_totale: order.pesoTotale || null,
+    supplier_code: order.supplierCode || null,
+    supplier_name: order.supplierName || null,
+    supplier_phone: order.supplierPhone || null,
+    tot_peso_res: order.totPesoRes || null,
+    raw_header: order.rawHeader || null,
+    upload_date: new Date().toISOString(),
+  };
+}
+
+function toMatRow(orderId, mat) {
+  return {
+    order_id: orderId,
+    pos: mat.pos || null,
+    scadenza: mat.scadenza || null,
+    codice_prodotto: mat.codiceProdotto || null,
+    descrizione: mat.descrizione || null,
+    giacenza: mat.giacenza ?? null,
+    impegnato: mat.impegnato ?? null,
+    in_ordine: mat.inOrdine ?? null,
+    cons_richiesta: mat.consRichiesta || null,
+    peso: mat.peso ?? null,
+    ordinato: mat.ordinato ?? null,
+    ricevuto: mat.ricevuto ?? null,
+    valore_residuo: mat.valoreResiduo ?? null,
+    prenotato: mat.prenotato ?? null,
+    qty_inviata: mat.qtyInviata ?? null,
+    kg: mat.kg ?? null,
+    trattamento: mat.trattamento || null,
+    bolla: mat.bolla || null,
+    status: mat.status || null,
+  };
+}
+
+export async function importParsedOrders(orderType, parsedOrders, onProgress) {
+  const total = parsedOrders.length;
   let totalOrders = 0;
   let totalMaterials = 0;
   let totalRefs = 0;
 
-  for (const order of parsedOrders) {
-    // 1. Upsert order
-    const orderRow = {
-      order_type: orderType,
-      order_ref: order.orderRef,
-      order_date: order.orderDate || null,
-      client_code: order.clientCode || null,
-      client_name: order.clientName || null,
-      client_ref: order.clientRef || null,
-      valore_residuo: order.valoreResiduo || null,
-      peso_totale: order.pesoTotale || null,
-      supplier_code: order.supplierCode || null,
-      supplier_name: order.supplierName || null,
-      supplier_phone: order.supplierPhone || null,
-      tot_peso_res: order.totPesoRes || null,
-      raw_header: order.rawHeader || null,
-      upload_date: new Date().toISOString(),
-    };
-
-    const { data: upserted, error: orderErr } = await supabase
+  // Step 1: Batch upsert orders → get IDs mapped by order_ref
+  const refToId = new Map();
+  for (let i = 0; i < total; i += BATCH_ORDERS) {
+    const chunk = parsedOrders.slice(i, i + BATCH_ORDERS);
+    const rows = chunk.map(o => toOrderRow(orderType, o));
+    const { data, error } = await supabase
       .from('supplier_orders')
-      .upsert(orderRow, { onConflict: 'order_type,order_ref' })
-      .select('id')
-      .single();
-    if (orderErr) throw orderErr;
+      .upsert(rows, { onConflict: 'order_type,order_ref' })
+      .select('id, order_ref');
+    if (error) throw error;
+    for (const row of data) refToId.set(row.order_ref, row.id);
+    totalOrders += data.length;
+    if (onProgress) onProgress({ current: Math.min(i + BATCH_ORDERS, total), total });
+  }
 
-    const orderId = upserted.id;
-    totalOrders++;
-
-    // 2. Delete old refs for this order's materials (will be re-created)
-    const { data: oldMats } = await supabase
+  // Step 2: Collect all order IDs → batch delete old refs
+  const allOrderIds = [...refToId.values()];
+  // Get old material IDs for these orders (paginated, Supabase max 1000)
+  const oldMatIds = [];
+  for (let i = 0; i < allOrderIds.length; i += 200) {
+    const chunk = allOrderIds.slice(i, i + 200);
+    const { data } = await supabase
       .from('order_materials')
       .select('id')
-      .eq('order_id', orderId);
-    if (oldMats?.length) {
-      await supabase
-        .from('material_refs')
-        .delete()
-        .in('material_id', oldMats.map(m => m.id));
-    }
+      .in('order_id', chunk);
+    if (data) oldMatIds.push(...data.map(m => m.id));
+  }
+  // Batch delete refs for old materials
+  for (let i = 0; i < oldMatIds.length; i += 500) {
+    const chunk = oldMatIds.slice(i, i + 500);
+    await supabase.from('material_refs').delete().in('material_id', chunk);
+  }
 
-    // 3. Upsert materials
+  // Step 3: Batch upsert materials → get IDs for ref linking
+  // Build flat list of { matRow, refs[] } with order_id resolved
+  const matEntries = [];
+  for (const order of parsedOrders) {
+    const orderId = refToId.get(order.orderRef);
     for (const mat of order.materials || []) {
-      const matRow = {
-        order_id: orderId,
-        pos: mat.pos || null,
-        scadenza: mat.scadenza || null,
-        codice_prodotto: mat.codiceProdotto || null,
-        descrizione: mat.descrizione || null,
-        giacenza: mat.giacenza ?? null,
-        impegnato: mat.impegnato ?? null,
-        in_ordine: mat.inOrdine ?? null,
-        cons_richiesta: mat.consRichiesta || null,
-        peso: mat.peso ?? null,
-        ordinato: mat.ordinato ?? null,
-        ricevuto: mat.ricevuto ?? null,
-        valore_residuo: mat.valoreResiduo ?? null,
-        prenotato: mat.prenotato ?? null,
-        qty_inviata: mat.qtyInviata ?? null,
-        kg: mat.kg ?? null,
-        trattamento: mat.trattamento || null,
-        bolla: mat.bolla || null,
-        status: mat.status || null,
-      };
-
-      const { data: upsertedMat, error: matErr } = await supabase
-        .from('order_materials')
-        .upsert(matRow, { onConflict: 'order_id,codice_prodotto,pos' })
-        .select('id')
-        .single();
-      if (matErr) throw matErr;
-
-      totalMaterials++;
-
-      // 4. Insert refs
-      if (mat.refs?.length) {
-        const refRows = mat.refs.map(r => ({
-          material_id: upsertedMat.id,
-          ref_type: r.refType || null,
-          ref_code: r.refCode || null,
-          ref_name: r.refName || null,
-          ref_order: r.refOrder || null,
-          ref_date: r.refDate || null,
-          ref_qty: r.refQty ?? null,
-          delivery_date: r.deliveryDate || null,
-        }));
-        const { error: refErr } = await supabase.from('material_refs').insert(refRows);
-        if (refErr) throw refErr;
-        totalRefs += refRows.length;
-      }
+      matEntries.push({ row: toMatRow(orderId, mat), refs: mat.refs || [] });
     }
   }
+
+  const matKeyToRefs = new Map(); // "orderId|codice|pos" → refs[]
+  for (let i = 0; i < matEntries.length; i += BATCH_MATERIALS) {
+    const chunk = matEntries.slice(i, i + BATCH_MATERIALS);
+    const rows = chunk.map(e => e.row);
+    const { data, error } = await supabase
+      .from('order_materials')
+      .upsert(rows, { onConflict: 'order_id,codice_prodotto,pos' })
+      .select('id, order_id, codice_prodotto, pos');
+    if (error) throw error;
+    totalMaterials += data.length;
+
+    // Map returned IDs back to refs via composite key
+    // First, build lookup from chunk
+    const chunkLookup = new Map();
+    for (const entry of chunk) {
+      const key = `${entry.row.order_id}|${entry.row.codice_prodotto}|${entry.row.pos}`;
+      chunkLookup.set(key, entry.refs);
+    }
+    for (const row of data) {
+      const key = `${row.order_id}|${row.codice_prodotto}|${row.pos}`;
+      const refs = chunkLookup.get(key);
+      if (refs?.length) matKeyToRefs.set(row.id, refs);
+    }
+  }
+
+  // Step 4: Batch insert all refs
+  const allRefRows = [];
+  for (const [materialId, refs] of matKeyToRefs) {
+    for (const r of refs) {
+      allRefRows.push({
+        material_id: materialId,
+        ref_type: r.refType || null,
+        ref_code: r.refCode || null,
+        ref_name: r.refName || null,
+        ref_order: r.refOrder || null,
+        ref_date: r.refDate || null,
+        ref_qty: r.refQty ?? null,
+        delivery_date: r.deliveryDate || null,
+      });
+    }
+  }
+  for (let i = 0; i < allRefRows.length; i += BATCH_REFS) {
+    const chunk = allRefRows.slice(i, i + BATCH_REFS);
+    const { error } = await supabase.from('material_refs').insert(chunk);
+    if (error) throw error;
+  }
+  totalRefs = allRefRows.length;
 
   return { totalOrders, totalMaterials, totalRefs };
 }

@@ -13,7 +13,7 @@ export default function SupplierUpload() {
   const { importData, importing } = useSupplierData();
   const [results, setResults] = useState([]);
   const [error, setError] = useState(null);
-  const [processing, setProcessing] = useState(null); // currently processing type
+  const [progress, setProgress] = useState(null); // { file, phase, detail }
   const fileInputRef = useRef(null);
 
   const handleFiles = async (files) => {
@@ -22,31 +22,35 @@ export default function SupplierUpload() {
 
     for (const file of files) {
       try {
-        setProcessing(file.name);
-
-        // Extract text
-        const lines = await extractPdfLines(file);
+        // Phase 1: PDF extraction
+        setProgress({ file: file.name, phase: 'pdf', detail: 'Apertura...' });
+        const lines = await extractPdfLines(file, ({ current, total }) => {
+          setProgress({ file: file.name, phase: 'pdf', detail: `pagina ${current}/${total}` });
+        });
         if (!lines.length) {
           newResults.push({ file: file.name, error: 'Nessun testo estratto dal PDF' });
           continue;
         }
 
-        // Detect type (filename + content)
+        // Phase 2: Detection + Parsing
         let type = detectPdfType(lines, file.name);
-
         if (!type) {
           newResults.push({ file: file.name, error: 'Tipo PDF non riconosciuto. Usa uno dei file standard di Embyon.' });
           continue;
         }
 
-        console.log(`[SupplierUpload] file="${file.name}" detected type="${type}", first 20 lines:`, lines.slice(0, 20));
-
-        // Parse
+        setProgress({ file: file.name, phase: 'parse', detail: 'analisi...' });
         const parsed = parseByType(lines, type);
-        console.log(`[SupplierUpload] parsed ${parsed.length} orders, first orderRef:`, parsed[0]?.orderRef);
+        setProgress({ file: file.name, phase: 'parse', detail: `trovati ${parsed.length} ordini` });
+
+        console.log(`[SupplierUpload] file="${file.name}" type="${type}", ${parsed.length} orders`);
+
+        // Phase 3: Save to DB
+        const saveProgress = ({ current, total }) => {
+          setProgress({ file: file.name, phase: 'save', detail: `${current}/${total} ordini` });
+        };
 
         if (type === 'MIXED') {
-          // Classify each order and import by type
           const grouped = classifyMixedOrders(parsed);
           const breakdown = [];
           let totalOrders = 0, totalMaterials = 0, totalRefs = 0;
@@ -54,7 +58,8 @@ export default function SupplierUpload() {
           for (const subType of ['OA', 'OP', 'ACCIAIERIA']) {
             const subOrders = grouped[subType];
             if (!subOrders.length) continue;
-            const result = await importData(subType, subOrders);
+            setProgress({ file: file.name, phase: 'save', detail: `${subType}... (${subOrders.length} ordini)` });
+            const result = await importData(subType, subOrders, saveProgress);
             totalOrders += result.totalOrders;
             totalMaterials += result.totalMaterials;
             totalRefs += result.totalRefs;
@@ -70,8 +75,7 @@ export default function SupplierUpload() {
             breakdown,
           });
         } else {
-          // Single-type file
-          const result = await importData(type, parsed);
+          const result = await importData(type, parsed, saveProgress);
           newResults.push({
             file: file.name,
             type,
@@ -86,7 +90,7 @@ export default function SupplierUpload() {
       }
     }
 
-    setProcessing(null);
+    setProgress(null);
     setResults(newResults);
   };
 
@@ -102,6 +106,8 @@ export default function SupplierUpload() {
     e.target.value = '';
   };
 
+  const busy = progress || importing;
+
   return (
     <div>
       <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.7px', color: 'var(--text-tertiary)', marginBottom: 14 }}>
@@ -110,18 +116,19 @@ export default function SupplierUpload() {
 
       {/* Drop zone */}
       <div
-        onDrop={handleDrop}
+        onDrop={busy ? undefined : handleDrop}
         onDragOver={e => e.preventDefault()}
-        onClick={() => fileInputRef.current?.click()}
+        onClick={() => !busy && fileInputRef.current?.click()}
         style={{
           border: '2px dashed var(--border-mid)',
           borderRadius: 'var(--radius-lg)',
           padding: '40px 20px',
           textAlign: 'center',
-          cursor: 'pointer',
+          cursor: busy ? 'default' : 'pointer',
           background: 'var(--bg-subtle)',
           transition: 'border-color 0.15s',
           marginBottom: 16,
+          opacity: busy ? 0.7 : 1,
         }}
       >
         <input
@@ -132,19 +139,29 @@ export default function SupplierUpload() {
           onChange={handleInputChange}
           style={{ display: 'none' }}
         />
-        {processing ? (
+        {progress ? (
           <div style={{ color: 'var(--text-secondary)', fontSize: 13 }}>
-            Elaborazione <strong>{processing}</strong>...
+            <strong>{progress.file}</strong>
+            <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text-tertiary)' }}>
+              {progress.phase === 'pdf' && <>Lettura PDF... ({progress.detail})</>}
+              {progress.phase === 'parse' && <>Parsing ordini... ({progress.detail})</>}
+              {progress.phase === 'save' && <>Salvataggio su database... ({progress.detail})</>}
+            </div>
+            <div style={{ marginTop: 8, height: 3, borderRadius: 2, background: 'var(--border)', overflow: 'hidden', maxWidth: 280, margin: '8px auto 0' }}>
+              <div style={{
+                height: '100%', borderRadius: 2, background: 'var(--accent)',
+                transition: 'width 0.2s',
+                width: progress.phase === 'pdf' ? '33%' : progress.phase === 'parse' ? '60%' : '90%',
+              }} />
+            </div>
           </div>
-        ) : importing ? (
-          <div style={{ color: 'var(--text-secondary)', fontSize: 13 }}>Salvataggio in corso...</div>
         ) : (
           <>
             <div style={{ fontSize: 14, color: 'var(--text-secondary)', marginBottom: 4 }}>
               Trascina i PDF qui oppure clicca per selezionare
             </div>
             <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>
-              Supportati: OV, OA, OP, OL, Acciaieria
+              Supportati: OV, OA + OP + Acciaieria, OL
             </div>
           </>
         )}
