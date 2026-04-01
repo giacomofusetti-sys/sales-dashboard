@@ -122,6 +122,23 @@ export async function searchOrders(query) {
 const ORDER_SELECT = 'id, order_type, order_ref, order_date, client_name, supplier_name, valore_residuo, peso_totale, tot_peso_res';
 const NAME_MATCH_REF_TYPES = new Set(['OV', 'OL', 'BPV']);
 
+let ghostCounter = 0;
+function makeGhostOrder(orderRef) {
+  const type = orderRef.split('/')[0] || 'UNKNOWN';
+  return {
+    id: `_ghost_${++ghostCounter}`,
+    order_type: type,
+    order_ref: orderRef,
+    order_date: null,
+    client_name: null,
+    supplier_name: null,
+    valore_residuo: null,
+    peso_totale: null,
+    tot_peso_res: null,
+    _ghost: true,
+  };
+}
+
 export async function findLinkedOrders(orderId, orderRef) {
   const linkedMap = new Map(); // id → order (deduped)
 
@@ -149,8 +166,16 @@ export async function findLinkedOrders(orderId, orderRef) {
         .from('supplier_orders')
         .select(ORDER_SELECT)
         .in('order_ref', reliableOrderRefs);
+      const foundRefs = new Set((fwdOrders || []).map(o => o.order_ref));
       for (const o of (fwdOrders || [])) {
         if (o.id !== orderId) linkedMap.set(o.id, o);
+      }
+      // Create ghost nodes for refs that didn't resolve
+      for (const ref of reliableOrderRefs) {
+        if (!foundRefs.has(ref)) {
+          const ghost = makeGhostOrder(ref);
+          linkedMap.set(ghost.id, ghost);
+        }
       }
     }
 

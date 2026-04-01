@@ -84,6 +84,7 @@ export default function OrderMap({ onNavigateToOrder }) {
       const allIds = new Set([order.id, ...level1.map(o => o.id)]);
       const level2 = [];
       for (const l1 of level1) {
+        if (l1._ghost) continue; // ghost nodes have no DB data to traverse
         try {
           const sub = await findLinkedOrders(l1.id, l1.order_ref);
           for (const s of sub) {
@@ -105,6 +106,7 @@ export default function OrderMap({ onNavigateToOrder }) {
   }, []);
 
   const handleNodeClick = useCallback((order) => {
+    if (order._ghost) return; // ghost nodes are not navigable
     if (onNavigateToOrder) {
       onNavigateToOrder(order.order_type, order.order_ref);
     }
@@ -303,34 +305,38 @@ function FlowDiagram({ center, linked, onNodeClick }) {
 // ── SVG Order node ───────────────────────────────────────────
 
 function OrderNode({ x, y, order, isCenter, onClick }) {
-  const color = TYPE_COLORS[order.order_type] || '#94A3B8';
+  const ghost = order._ghost;
+  const color = ghost ? '#94A3B8' : (TYPE_COLORS[order.order_type] || '#94A3B8');
   const urgencyDot = deadlineDot(order);
-  const name = order.client_name || order.supplier_name || '';
+  const name = ghost ? 'Non nel sistema' : (order.client_name || order.supplier_name || '');
   const dateStr = order.order_date ? new Date(order.order_date).toLocaleDateString('it-IT') : '';
 
   return (
-    <g style={{ cursor: 'pointer' }} onClick={onClick}>
+    <g style={{ cursor: ghost ? 'default' : 'pointer', opacity: ghost ? 0.6 : 1 }} onClick={ghost ? undefined : onClick}>
       <rect x={x} y={y} width={NODE_W} height={NODE_H} rx={8} ry={8}
-        fill="#fff" stroke={isCenter ? color : '#E2E8F0'} strokeWidth={isCenter ? 2 : 1}
+        fill={ghost ? '#F8FAFC' : '#fff'}
+        stroke={isCenter ? color : (ghost ? '#CBD5E1' : '#E2E8F0')}
+        strokeWidth={isCenter ? 2 : 1}
+        strokeDasharray={ghost ? '6 3' : 'none'}
       />
       {/* Type badge */}
-      <rect x={x + 8} y={y + 8} width={order.order_type.length * 7 + 10} height={16} rx={3} fill={color} />
+      <rect x={x + 8} y={y + 8} width={order.order_type.length * 7 + 10} height={16} rx={3} fill={ghost ? '#CBD5E1' : color} />
       <text x={x + 13} y={y + 20} fontSize={9} fontWeight={700} fill="#fff" fontFamily="sans-serif">{order.order_type}</text>
       {/* Order ref */}
-      <text x={x + 8} y={y + 40} fontSize={13} fontWeight={700} fill="#1E293B" fontFamily="'Lora', serif">{order.order_ref}</text>
+      <text x={x + 8} y={y + 40} fontSize={13} fontWeight={700} fill={ghost ? '#94A3B8' : '#1E293B'} fontFamily="'Lora', serif">{order.order_ref}</text>
       {/* Name (truncated) */}
-      <text x={x + 8} y={y + 56} fontSize={11} fill="#64748B" fontFamily="sans-serif">
+      <text x={x + 8} y={y + 56} fontSize={11} fill={ghost ? '#94A3B8' : '#64748B'} fontFamily="sans-serif" fontStyle={ghost ? 'italic' : 'normal'}>
         {name.length > 30 ? name.slice(0, 28) + '...' : name}
       </text>
       {/* Date + urgency dot */}
-      {dateStr && (
+      {dateStr && !ghost && (
         <>
           <circle cx={x + 14} cy={y + NODE_H - 14} r={4} fill={urgencyDot} />
           <text x={x + 22} y={y + NODE_H - 10} fontSize={11} fill="#64748B" fontFamily="'Lora', serif">{dateStr}</text>
         </>
       )}
       {/* Value */}
-      {order.valore_residuo != null && (
+      {order.valore_residuo != null && !ghost && (
         <text x={x + NODE_W - 8} y={y + NODE_H - 10} fontSize={11} fill="#64748B" fontFamily="'Lora', serif" textAnchor="end">
           {order.valore_residuo.toLocaleString('it-IT', { style: 'currency', currency: 'EUR' })}
         </text>
