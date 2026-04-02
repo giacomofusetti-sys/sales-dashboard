@@ -167,6 +167,9 @@ export function parseOV(lines) {
 // ── OA/OP/Acciaieria Parser ──────────────────────────────────
 
 const OAOP_HEADER_RE = /^\*?(OA|OP)\/(\d{4}\/\d{7})\s+(\d{2}\/\d{2}\/\d{2})\s*F\s+(\d+)\s+(.*)/;
+// Material line must start with date + product code (with #) — require at least
+// some content after, but NOT match continuation/description lines that happen
+// to start with a date (those won't have a # code immediately after)
 const OAOP_MATERIAL_RE = /^(\d{2}\/\d{2}\/\d{2})\s+([A-Z0-9]{1,5}#[A-Z0-9]+)\s+(.*)/;
 const OAOP_REF_RE = /^(OV|OL|BPV)[.\s](\d{4})[.\s](\d+)\s+(.+?)\s+(\d{2}\/\d{2}\/\d{2})\s+([\d.,]+)/;
 const OAOP_FOOTER_RE = /^Tot\.\s*peso\s*res\.\s*([\d.,]+)/i;
@@ -257,6 +260,29 @@ export function parseOAOP(lines, forceType) {
   }
 
   if (current) orders.push(current);
+
+  // Deduplicate materials within each order: same logic as parseOV —
+  // if two materials share codiceProdotto + scadenza, keep the one with more data.
+  for (const order of orders) {
+    const seen = new Map();
+    for (const mat of order.materials) {
+      const key = `${mat.codiceProdotto}|${mat.scadenza || ''}`;
+      if (seen.has(key)) {
+        const existing = seen.get(key);
+        const scoreOf = (m) => {
+          const nonNull = Object.values(m).filter(v => v != null && v !== '').length;
+          return (m.refs ? m.refs.length : 0) * 1000 + nonNull;
+        };
+        if (scoreOf(mat) > scoreOf(existing)) {
+          seen.set(key, mat);
+        }
+      } else {
+        seen.set(key, mat);
+      }
+    }
+    order.materials = [...seen.values()];
+  }
+
   return orders;
 }
 
@@ -386,21 +412,13 @@ export function parseOL(lines) {
       continue;
     }
 
-    // Material line before positions (material to receive)
+    // Material line before positions (material to receive) — skip these,
+    // Ester only wants the Pos. (return) rows, not the pre-position lines.
+    // Still match to set currentMat for ref attachment, but don't save.
     const matLine = line.match(OL_MATERIAL_RE);
     if (matLine && !currentMat) {
-      currentMat = {
-        pos: null,
-        codiceProdotto: matLine[1],
-        descrizione: matLine[2].trim(),
-        refs: [],
-      };
-      const qtyMatch = matLine[2].match(/([\d.,]+)\s*$/);
-      if (qtyMatch) {
-        currentMat.qtyInviata = parseItalianNumber(qtyMatch[1]);
-        currentMat.descrizione = matLine[2].slice(0, matLine[2].length - qtyMatch[0].length).trim();
-      }
-      current.materials.push(currentMat);
+      // Don't push to materials — just track as context for potential refs
+      currentMat = { _skip: true, refs: [] };
       continue;
     }
 

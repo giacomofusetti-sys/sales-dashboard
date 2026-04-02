@@ -145,7 +145,14 @@ export default function OrderList({ orderType, highlightOrder }) {
                   {/* Order-level info */}
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, fontSize: 12, color: 'var(--text-secondary)', marginBottom: 12 }}>
                     {order.supplier_code && <span>Cod. {order.supplier_code}</span>}
-                    {order.supplier_phone && <span>Tel. {order.supplier_phone}</span>}
+                    {order.supplier_phone && (
+                      <a href={`tel:${order.supplier_phone.replace(/\s+/g, '')}`}
+                        style={{ color: 'var(--accent)', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                        onClick={e => e.stopPropagation()}>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+                        {order.supplier_phone}
+                      </a>
+                    )}
                     {order.client_code && <span>Cod. cliente {order.client_code}</span>}
                     {order.valore_residuo != null && <span>Val. residuo: <b style={{ fontFamily: 'var(--font-serif)' }}>{order.valore_residuo.toLocaleString('it-IT', { style: 'currency', currency: 'EUR' })}</b></span>}
                     {order.peso_totale != null && <span>Peso tot.: <b style={{ fontFamily: 'var(--font-serif)' }}>{fmtNum(order.peso_totale)}</b></span>}
