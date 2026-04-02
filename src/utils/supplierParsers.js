@@ -39,11 +39,54 @@ function buildRefOrder(type, year, num) {
 
 const OV_HEADER_RE = /^(OV\/\d{4}\/\d{5})\s*-\s*(.*)/;
 const OV_CLIENT_RE = /C\s+(\d+)\s+(.+?)(?:\s{2,}|\s+\d{2}\/\d{2}\/\d{2})/;
+const OV_CLIENT_REF_RE = /(?:Vs\.?\s*Rif\.?|Rif\.?\s*Cliente|N\.?\s*Ord\.?\s*Cl\.?|Rif\.?)\s*:?\s*(\S+.*?)$/i;
 const OV_DATE_RE = /(\d{2}\/\d{2}\/\d{2})/;
 const OV_MATERIAL_RE = /^(?:(\d+)\s+)?(\d{2}\/\d{2}\/\d{2})\s+([A-Z0-9]{1,5}#[A-Z0-9]+)\s+(.*)/;
 const OV_SUPPLIER_RE = /^F\s+(\d+)\s+(.*?)\s+(OA|OP|OL)\/(\d{4}\/\d{7})\s+(\d{2}\/\d{2}\/\d{2})\s+([\d.,]+)\s+(\d{2}\/\d{2}\/\d{2})/;
 const OV_FOOTER_RE = /^Valore Residuo Ordine\s+([\d.,]+)/;
 const OV_PESO_RE = /Peso Totale Ordine\s+([\d.,]+)/;
+
+// Extract trailing numeric fields from OV material rest string.
+// Format: DESCRIZIONE  [CONS_RICH]  [GIACENZA  IMPEGNATO  IN_ORDINE]  [PESO]
+// Fields are separated by 2+ spaces. We extract from right to left.
+function parseOvMaterialFields(rest) {
+  const result = { descrizione: '', consRichiesta: null, giacenza: null, impegnato: null, inOrdine: null, peso: null };
+
+  // Split into segments by 2+ spaces
+  const segments = rest.split(/\s{2,}/).map(s => s.trim()).filter(Boolean);
+  if (!segments.length) return result;
+
+  // Walk from the end — numeric segments are the data columns
+  const nums = [];
+  let dateIdx = -1;
+  for (let i = segments.length - 1; i >= 0; i--) {
+    const s = segments[i];
+    if (/^[\d.,]+$/.test(s)) {
+      nums.unshift({ idx: i, val: parseItalianNumber(s) });
+    } else if (/^\d{2}\/\d{2}\/\d{2}$/.test(s) && dateIdx === -1) {
+      dateIdx = i;
+    } else {
+      break; // hit non-numeric, non-date segment → rest is description
+    }
+  }
+
+  // Assign numbers right-to-left: peso, in_ordine, impegnato, giacenza
+  if (nums.length >= 1) result.peso = nums[nums.length - 1].val;
+  if (nums.length >= 2) result.inOrdine = nums[nums.length - 2].val;
+  if (nums.length >= 3) result.impegnato = nums[nums.length - 3].val;
+  if (nums.length >= 4) result.giacenza = nums[nums.length - 4].val;
+
+  // Date = cons_richiesta
+  if (dateIdx >= 0) result.consRichiesta = parseDateDDMMYY(segments[dateIdx]);
+
+  // Description = everything before the first extracted field
+  const firstDataIdx = dateIdx >= 0
+    ? Math.min(dateIdx, nums.length ? nums[0].idx : Infinity)
+    : (nums.length ? nums[0].idx : segments.length);
+  result.descrizione = segments.slice(0, firstDataIdx).join(' ');
+
+  return result;
+}
 
 export function parseOV(lines) {
   const orders = [];
@@ -73,6 +116,10 @@ export function parseOV(lines) {
         current.clientCode = cm[1];
         current.clientName = cm[2].trim();
       }
+
+      // Extract client reference (Vs. Rif., Rif. Cliente, etc.)
+      const crm = rest.match(OV_CLIENT_REF_RE);
+      if (crm) current.clientRef = crm[1].trim();
       continue;
     }
 
@@ -84,39 +131,26 @@ export function parseOV(lines) {
       current.valoreResiduo = parseItalianNumber(fm[1]);
       const pm = line.match(OV_PESO_RE);
       if (pm) current.pesoTotale = parseItalianNumber(pm[1]);
+      currentMat = null; // footer ends material context
       continue;
     }
 
     // Material line
     const mm = line.match(OV_MATERIAL_RE);
     if (mm) {
+      const fields = parseOvMaterialFields(mm[4]);
       currentMat = {
         pos: mm[1] || null,
         scadenza: parseDateDDMMYY(mm[2]),
         codiceProdotto: mm[3],
-        descrizione: '',
+        descrizione: fields.descrizione,
+        consRichiesta: fields.consRichiesta,
+        giacenza: fields.giacenza,
+        impegnato: fields.impegnato,
+        inOrdine: fields.inOrdine,
+        peso: fields.peso,
         refs: [],
       };
-      // Parse remaining fields from the description part
-      const rest = mm[4];
-      const parts = rest.split(/\s{2,}/);
-      if (parts.length > 0) currentMat.descrizione = parts[0].trim();
-
-      // Try to extract numeric fields from the end
-      const nums = rest.match(/([\d.,]+)\s*$/);
-      if (nums) currentMat.peso = parseItalianNumber(nums[1]);
-
-      // Look for delivery date
-      const delivDate = rest.match(/(\d{2}\/\d{2}\/\d{2})\s*$/);
-      if (!delivDate) {
-        const allDates = rest.match(/(\d{2}\/\d{2}\/\d{2})/g);
-        if (allDates && allDates.length > 0) {
-          currentMat.consRichiesta = parseDateDDMMYY(allDates[allDates.length - 1]);
-        }
-      } else {
-        currentMat.consRichiesta = parseDateDDMMYY(delivDate[1]);
-      }
-
       current.materials.push(currentMat);
       continue;
     }
@@ -133,18 +167,23 @@ export function parseOV(lines) {
         refQty: parseItalianNumber(sm[6]),
         deliveryDate: parseDateDDMMYY(sm[7]),
       });
+      continue;
+    }
+
+    // Continuation line — append to current material's description
+    // Must not match any other pattern and must follow a material line
+    if (currentMat && line.trim()) {
+      currentMat.descrizione = (currentMat.descrizione + ' ' + line.trim()).trim();
     }
   }
 
   if (current) orders.push(current);
 
-  // Deduplicate materials within each order: if two materials share the same
-  // codiceProdotto + scadenza, keep the one with more data (more refs, then
-  // more non-null fields).
+  // Deduplicate materials: by codiceProdotto + pos (more robust than scadenza)
   for (const order of orders) {
     const seen = new Map();
     for (const mat of order.materials) {
-      const key = `${mat.codiceProdotto}|${mat.scadenza || ''}`;
+      const key = `${mat.codiceProdotto}|${mat.pos || ''}`;
       if (seen.has(key)) {
         const existing = seen.get(key);
         const scoreOf = (m) => {
@@ -386,27 +425,39 @@ export function parseOL(lines) {
         refs: [],
       };
 
-      // Parse remaining: DESCRIZIONE  QTY  KG  TRATTAMENTO  BOLLA  DATA  STATUS
+      // Parse remaining: DESCRIZIONE  QTY  KG  TRATTAMENTO  BOLLA  CASSONE  STATUS
       const rest = pm[4];
+      let remaining = rest;
 
       // Try to find "Trasferimento" status at end
-      const statusMatch = rest.match(/(Trasferimento\s+\w+)\s*$/i);
-      let remaining = rest;
+      const statusMatch = remaining.match(/(Trasferimento\s+\w+)\s*$/i);
       if (statusMatch) {
         currentMat.status = statusMatch[1].trim();
-        remaining = rest.slice(0, rest.length - statusMatch[0].length);
+        remaining = remaining.slice(0, remaining.length - statusMatch[0].length);
       }
 
-      // Extract numbers and description from remaining
-      const parts = remaining.split(/\s{2,}/);
+      // Extract bolla (DDL.nnn.dd/mm/yy or BPL.nnn.dd/mm/yy)
+      const bollaMatch = remaining.match(/((?:DDL|BPL|DDT)[.\s]\d+[.\s]\d{2}\/\d{2}\/\d{2})/i);
+      if (bollaMatch) {
+        currentMat.bolla = bollaMatch[1].trim();
+        remaining = remaining.replace(bollaMatch[0], '  ');
+      }
+
+      // Extract cassone number
+      const cassMatch = remaining.match(/(?:Cass(?:one)?\.?\s*)(\d+)/i);
+      if (cassMatch) {
+        currentMat.cassone = cassMatch[1];
+        remaining = remaining.replace(cassMatch[0], '  ');
+      }
+
+      // Split remaining segments
+      const parts = remaining.split(/\s{2,}/).map(s => s.trim()).filter(Boolean);
       if (parts.length > 0) currentMat.descrizione = parts[0].trim();
 
-      // Try to extract qty and kg
-      const numsInRest = remaining.match(/([\d.,]+)\s+([\d.,]+)/);
-      if (numsInRest) {
-        currentMat.qtyInviata = parseItalianNumber(numsInRest[1]);
-        currentMat.kg = parseItalianNumber(numsInRest[2]);
-      }
+      // Try to extract qty and kg from remaining numeric segments
+      const nums = parts.slice(1).filter(s => /^[\d.,]+$/.test(s)).map(s => parseItalianNumber(s));
+      if (nums.length >= 1) currentMat.qtyInviata = nums[0];
+      if (nums.length >= 2) currentMat.kg = nums[1];
 
       current.materials.push(currentMat);
       continue;

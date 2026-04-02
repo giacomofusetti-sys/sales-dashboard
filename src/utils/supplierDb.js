@@ -363,6 +363,7 @@ function toMatRow(orderId, mat) {
     trattamento: mat.trattamento || null,
     bolla: mat.bolla || null,
     status: mat.status || null,
+    cassone: mat.cassone || null,
   };
 }
 

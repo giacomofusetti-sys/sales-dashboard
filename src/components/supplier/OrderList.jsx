@@ -119,6 +119,11 @@ export default function OrderList({ orderType, highlightOrder }) {
               >
                 <span style={{ fontFamily: 'var(--font-serif)', fontWeight: 700, fontSize: 14, color: 'var(--text-primary)', minWidth: 160 }}>
                   {order.order_ref}
+                  {order.client_ref && (
+                    <span style={{ fontWeight: 400, fontSize: 11, color: 'var(--text-tertiary)', marginLeft: 6 }}>
+                      Rif. {order.client_ref}
+                    </span>
+                  )}
                 </span>
                 {order.order_date && (
                   <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>
@@ -178,11 +183,11 @@ export default function OrderList({ orderType, highlightOrder }) {
                             <th style={thStyle}>Scad. Effettiva</th>
                             <th style={thStyle}>Codice</th>
                             <th style={thStyle}>Descrizione</th>
-                            {orderType === 'OV' && <><th style={thStyle}>Peso</th><th style={thStyle}>Giacenza</th><th style={thStyle}>Impegnato</th><th style={thStyle}>In Ordine</th></>}
+                            {orderType === 'OV' && <><th style={thStyle}>Giacenza</th><th style={thStyle}>Impegnato</th><th style={thStyle}>Disponib.</th><th style={thStyle}>In Ordine</th><th style={thStyle}>Peso</th></>}
                             {(orderType === 'OA' || orderType === 'OP' || orderType === 'ACCIAIERIA') && (
-                              <><th style={thStyle}>Ordinato</th><th style={thStyle}>Ricevuto</th><th style={thStyle}>Val. Res.</th></>
+                              <><th style={thStyle}>Ordinato</th><th style={thStyle}>Ricevuto</th><th style={thStyle}>Val. Res.</th><th style={thStyle}>Scad. Cl.</th></>
                             )}
-                            {orderType === 'OL' && <><th style={thStyle}>Qty</th><th style={thStyle}>Kg</th><th style={thStyle}>Status</th><th style={thStyle}>Bolla</th></>}
+                            {orderType === 'OL' && <><th style={thStyle}>Qty</th><th style={thStyle}>Kg</th><th style={thStyle}>Status</th><th style={thStyle}>Bolla</th><th style={thStyle}>Cassone</th></>}
                             <th style={thStyle}>Rif.</th>
                             <th style={thStyle}>Note</th>
                           </tr>
@@ -229,20 +234,30 @@ export default function OrderList({ orderType, highlightOrder }) {
                                 </td>
                                 <td style={{ ...tdStyle, fontFamily: 'var(--font-serif)', fontWeight: 600 }}>{mat.codice_prodotto || '—'}</td>
                                 <td style={tdStyle}>{mat.descrizione || '—'}</td>
-                                {orderType === 'OV' && <><td style={{ ...tdStyle, fontFamily: 'var(--font-serif)' }}>{fmtNum(mat.peso)}</td><td style={{ ...tdStyle, fontFamily: 'var(--font-serif)' }}>{fmtNum(mat.giacenza)}</td><td style={{ ...tdStyle, fontFamily: 'var(--font-serif)' }}>{fmtNum(mat.impegnato)}</td><td style={{ ...tdStyle, fontFamily: 'var(--font-serif)' }}>{fmtNum(mat.in_ordine)}</td></>}
-                                {(orderType === 'OA' || orderType === 'OP' || orderType === 'ACCIAIERIA') && (
-                                  <>
+                                {orderType === 'OV' && (() => {
+                                  const disp = (mat.giacenza != null && mat.impegnato != null) ? mat.giacenza - mat.impegnato : null;
+                                  return <><td style={{ ...tdStyle, fontFamily: 'var(--font-serif)' }}>{fmtNum(mat.giacenza)}</td><td style={{ ...tdStyle, fontFamily: 'var(--font-serif)' }}>{fmtNum(mat.impegnato)}</td><td style={{ ...tdStyle, fontFamily: 'var(--font-serif)', fontWeight: disp !== null && disp < 0 ? 700 : 400, color: disp !== null && disp < 0 ? 'var(--red)' : 'var(--text-primary)' }}>{disp != null ? fmtNum(disp) : '—'}</td><td style={{ ...tdStyle, fontFamily: 'var(--font-serif)' }}>{fmtNum(mat.in_ordine)}</td><td style={{ ...tdStyle, fontFamily: 'var(--font-serif)' }}>{fmtNum(mat.peso)}</td></>;
+                                })()}
+                                {(orderType === 'OA' || orderType === 'OP' || orderType === 'ACCIAIERIA') && (() => {
+                                  // Earliest client deadline from refs
+                                  const refDates = matRefs.filter(r => r.ref_date).map(r => r.ref_date).sort();
+                                  const scadCl = refDates.length ? refDates[0] : null;
+                                  return <>
                                     <td style={{ ...tdStyle, fontFamily: 'var(--font-serif)' }}>{fmtNum(mat.ordinato)}</td>
                                     <td style={{ ...tdStyle, fontFamily: 'var(--font-serif)' }}>{fmtNum(mat.ricevuto)}</td>
                                     <td style={{ ...tdStyle, fontFamily: 'var(--font-serif)' }}>{fmtNum(mat.valore_residuo)}</td>
-                                  </>
-                                )}
+                                    <td style={{ ...tdStyle, fontFamily: 'var(--font-serif)', fontSize: 11 }}>
+                                      {scadCl ? new Date(scadCl).toLocaleDateString('it-IT') : '—'}
+                                    </td>
+                                  </>;
+                                })()}
                                 {orderType === 'OL' && (
                                   <>
                                     <td style={{ ...tdStyle, fontFamily: 'var(--font-serif)' }}>{fmtNum(mat.qty_inviata)}</td>
                                     <td style={{ ...tdStyle, fontFamily: 'var(--font-serif)' }}>{fmtNum(mat.kg)}</td>
                                     <td style={{ ...tdStyle, fontSize: 11 }}>{mat.status || '—'}</td>
                                     <td style={{ ...tdStyle, fontSize: 11 }}>{mat.bolla || '—'}</td>
+                                    <td style={{ ...tdStyle, fontSize: 11 }}>{mat.cassone || '—'}</td>
                                   </>
                                 )}
                                 <td style={tdStyle}>

@@ -56,6 +56,7 @@ CREATE TABLE order_materials (
   kg NUMERIC,
   trattamento TEXT,
   bolla TEXT,
+  cassone TEXT,
   status TEXT,
 
   -- Editable deadline
