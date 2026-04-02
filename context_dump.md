@@ -1,3 +1,160 @@
+# Sales Dashboard — Supplier Monitor Context Dump
+
+Generated: 2026-04-02
+
+---
+
+## 1. DB Schema: `supplier_orders`
+
+```sql
+-- From supabase/migration.sql
+CREATE TABLE supplier_orders (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  order_type TEXT NOT NULL,       -- 'OV', 'OA', 'OP', 'OL', 'ACCIAIERIA'
+  order_ref TEXT NOT NULL,        -- 'OV/2026/01557', 'OA/2026/0000632', etc.
+  order_date DATE,
+
+  -- OV fields
+  client_code TEXT,
+  client_name TEXT,
+  client_ref TEXT,
+  valore_residuo NUMERIC,
+  peso_totale NUMERIC,
+
+  -- OA/OP/OL/Acciaieria fields
+  supplier_code TEXT,
+  supplier_name TEXT,
+  supplier_phone TEXT,
+  tot_peso_res NUMERIC,
+
+  raw_header TEXT,
+  upload_date TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+
+  UNIQUE(order_type, order_ref)
+);
+```
+
+Columns (information_schema equivalent):
+
+| column_name     | data_type                    |
+|-----------------|------------------------------|
+| id              | uuid                         |
+| order_type      | text                         |
+| order_ref       | text                         |
+| order_date      | date                         |
+| client_code     | text                         |
+| client_name     | text                         |
+| client_ref      | text                         |
+| valore_residuo  | numeric                      |
+| peso_totale     | numeric                      |
+| supplier_code   | text                         |
+| supplier_name   | text                         |
+| supplier_phone  | text                         |
+| tot_peso_res    | numeric                      |
+| raw_header      | text                         |
+| upload_date     | timestamp with time zone     |
+
+## 2. DB Schema: `order_materials`
+
+```sql
+CREATE TABLE order_materials (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  order_id UUID REFERENCES supplier_orders(id) ON DELETE CASCADE,
+  pos TEXT,
+  scadenza DATE,
+  codice_prodotto TEXT,
+  descrizione TEXT,
+
+  -- OV fields
+  giacenza NUMERIC,
+  impegnato NUMERIC,
+  in_ordine NUMERIC,
+  cons_richiesta DATE,
+  peso NUMERIC,
+
+  -- OA/OP fields
+  ordinato NUMERIC,
+  ricevuto NUMERIC,
+  valore_residuo NUMERIC,
+  prenotato NUMERIC,
+
+  -- OL fields
+  qty_inviata NUMERIC,
+  kg NUMERIC,
+  trattamento TEXT,
+  bolla TEXT,
+  cassone TEXT,
+  status TEXT,
+
+  -- Editable deadline
+  scadenza_effettiva DATE,
+
+  UNIQUE(order_id, codice_prodotto, pos)
+);
+```
+
+Columns:
+
+| column_name        | data_type |
+|--------------------|-----------|
+| id                 | uuid      |
+| order_id           | uuid      |
+| pos                | text      |
+| scadenza           | date      |
+| codice_prodotto    | text      |
+| descrizione        | text      |
+| giacenza           | numeric   |
+| impegnato          | numeric   |
+| in_ordine          | numeric   |
+| cons_richiesta     | date      |
+| peso               | numeric   |
+| ordinato           | numeric   |
+| ricevuto           | numeric   |
+| valore_residuo     | numeric   |
+| prenotato          | numeric   |
+| qty_inviata        | numeric   |
+| kg                 | numeric   |
+| trattamento        | text      |
+| bolla              | text      |
+| cassone            | text      |
+| status             | text      |
+| scadenza_effettiva | date      |
+
+## 3. DB Schema: `material_refs`
+
+```sql
+CREATE TABLE material_refs (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  material_id UUID REFERENCES order_materials(id) ON DELETE CASCADE,
+  ref_type TEXT,       -- 'OV', 'OL', 'BPV', 'F'
+  ref_code TEXT,
+  ref_name TEXT,
+  ref_order TEXT,
+  ref_date DATE,
+  ref_qty NUMERIC,
+  delivery_date DATE
+);
+```
+
+## 4. DB Schema: `order_notes`
+
+```sql
+CREATE TABLE order_notes (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  order_ref TEXT NOT NULL,
+  order_type TEXT NOT NULL,
+  codice_prodotto TEXT,    -- NULL = note on whole order
+  note_text TEXT NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+```
+
+---
+
+## 5. PDF Parsers — `src/utils/supplierParsers.js`
+
+```js
 // ── Helpers ───────────────────────────────────────────────────
 
 /** Parse Italian number: "1.234,56" → 1234.56 */
@@ -46,113 +203,44 @@ const OV_SUPPLIER_RE = /^F\s+(\d+)\s+(.*?)\s+(OA|OP|OL)\/(\d{4}\/\d{7})\s+(\d{2}
 const OV_FOOTER_RE = /^Valore Residuo Ordine\s+([\d.,]+)/;
 const OV_PESO_RE = /Peso Totale Ordine\s+([\d.,]+)/;
 
-/** Test if a token is a pure Italian number: digits, dots (thousands), commas (decimal).
- *  Must not be part of product specs like M30x3000, 3,5x19, A2-70, DIN 933 */
-const PURE_NUM_RE = /^[\d.,]+$/;
-const DATE_RE = /^\d{2}\/\d{2}\/\d{2}$/;
-
-/** Find the best block of N consecutive pure-number tokens in a token array.
- *  Returns { startIdx, endIdx, nums[] } or null.
- *  Prefers rightmost block of >= targetLen. Falls back to shorter runs only
- *  if they have at least minLen tokens (default: targetLen / 2, min 2). */
-function findNumBlock(tokens, targetLen) {
-  const isNum = tokens.map(t => PURE_NUM_RE.test(t));
-
-  // Find all runs of consecutive numbers
-  const runs = [];
-  let runStart = -1;
-  for (let i = 0; i <= tokens.length; i++) {
-    if (i < tokens.length && isNum[i]) {
-      if (runStart === -1) runStart = i;
-    } else {
-      if (runStart !== -1) {
-        runs.push({ start: runStart, end: i, len: i - runStart });
-        runStart = -1;
-      }
-    }
-  }
-
-  if (!runs.length) return null;
-
-  const minLen = Math.max(2, Math.ceil(targetLen / 2));
-
-  // Prefer rightmost run of >= targetLen; fallback to rightmost run of >= minLen
-  let best = null;
-  for (const run of runs) {
-    if (run.len >= targetLen) {
-      const s = run.end - targetLen;
-      if (!best || best.priority < 2 || s > best.startIdx) {
-        best = { startIdx: s, endIdx: run.end, priority: 2 };
-      }
-    } else if (run.len >= minLen) {
-      if (!best || best.priority < 1 || (best.priority === 1 && run.start > best.startIdx)) {
-        best = { startIdx: run.start, endIdx: run.end, priority: 1 };
-      }
-    }
-  }
-
-  if (!best) return null;
-  return {
-    startIdx: best.startIdx,
-    endIdx: best.endIdx,
-    nums: tokens.slice(best.startIdx, best.endIdx).map(t => parseItalianNumber(t)),
-  };
-}
-
-// Extract fields from OV material rest string.
-// Looks for a block of 4 consecutive pure numbers (giacenza, impegnato, in_ordine, peso)
-// and an optional date (cons_richiesta) adjacent to the block.
-// Everything else is description (before + after the block).
+// Extract trailing numeric fields from OV material rest string.
+// Format: DESCRIZIONE  [CONS_RICH]  [GIACENZA  IMPEGNATO  IN_ORDINE]  [PESO]
+// Fields are separated by 2+ spaces. We extract from right to left.
 function parseOvMaterialFields(rest) {
   const result = { descrizione: '', consRichiesta: null, giacenza: null, impegnato: null, inOrdine: null, peso: null };
-  const tokens = rest.split(/\s+/).filter(Boolean);
-  if (!tokens.length) return result;
 
-  const block = findNumBlock(tokens, 4);
-  if (!block) {
-    // No numeric block found — everything is description
-    result.descrizione = tokens.join(' ');
-    return result;
+  // Split into segments by 2+ spaces
+  const segments = rest.split(/\s{2,}/).map(s => s.trim()).filter(Boolean);
+  if (!segments.length) return result;
+
+  // Walk from the end — numeric segments are the data columns
+  const nums = [];
+  let dateIdx = -1;
+  for (let i = segments.length - 1; i >= 0; i--) {
+    const s = segments[i];
+    if (/^[\d.,]+$/.test(s)) {
+      nums.unshift({ idx: i, val: parseItalianNumber(s) });
+    } else if (/^\d{2}\/\d{2}\/\d{2}$/.test(s) && dateIdx === -1) {
+      dateIdx = i;
+    } else {
+      break; // hit non-numeric, non-date segment → rest is description
+    }
   }
 
-  // Check for date adjacent to block (before or after)
-  if (block.startIdx > 0 && DATE_RE.test(tokens[block.startIdx - 1])) {
-    result.consRichiesta = parseDateDDMMYY(tokens[block.startIdx - 1]);
-    // Description = tokens before date + tokens after block
-    result.descrizione = [
-      ...tokens.slice(0, block.startIdx - 1),
-      ...tokens.slice(block.endIdx),
-    ].join(' ');
-  } else if (block.endIdx < tokens.length && DATE_RE.test(tokens[block.endIdx])) {
-    result.consRichiesta = parseDateDDMMYY(tokens[block.endIdx]);
-    result.descrizione = [
-      ...tokens.slice(0, block.startIdx),
-      ...tokens.slice(block.endIdx + 1),
-    ].join(' ');
-  } else {
-    result.descrizione = [
-      ...tokens.slice(0, block.startIdx),
-      ...tokens.slice(block.endIdx),
-    ].join(' ');
-  }
+  // Assign numbers right-to-left: peso, in_ordine, impegnato, giacenza
+  if (nums.length >= 1) result.peso = nums[nums.length - 1].val;
+  if (nums.length >= 2) result.inOrdine = nums[nums.length - 2].val;
+  if (nums.length >= 3) result.impegnato = nums[nums.length - 3].val;
+  if (nums.length >= 4) result.giacenza = nums[nums.length - 4].val;
 
-  // Assign from left to right within block: giacenza, impegnato, in_ordine, peso
-  const n = block.nums;
-  if (n.length >= 4) {
-    result.giacenza = n[0];
-    result.impegnato = n[1];
-    result.inOrdine = n[2];
-    result.peso = n[3];
-  } else if (n.length === 3) {
-    result.impegnato = n[0];
-    result.inOrdine = n[1];
-    result.peso = n[2];
-  } else if (n.length === 2) {
-    result.inOrdine = n[0];
-    result.peso = n[1];
-  } else if (n.length === 1) {
-    result.peso = n[0];
-  }
+  // Date = cons_richiesta
+  if (dateIdx >= 0) result.consRichiesta = parseDateDDMMYY(segments[dateIdx]);
+
+  // Description = everything before the first extracted field
+  const firstDataIdx = dateIdx >= 0
+    ? Math.min(dateIdx, nums.length ? nums[0].idx : Infinity)
+    : (nums.length ? nums[0].idx : segments.length);
+  result.descrizione = segments.slice(0, firstDataIdx).join(' ');
 
   return result;
 }
@@ -336,31 +424,18 @@ export function parseOAOP(lines, forceType) {
       };
 
       // Parse: DESCRIZIONE  ORDINATO  RICEVUTO  VAL_RES  PRENOTATO
-      // Find block of 4 consecutive pure numbers; rest is description
-      const restTokens = mm[3].split(/\s+/).filter(Boolean);
-      const oaBlock = findNumBlock(restTokens, 4);
-      if (oaBlock && oaBlock.nums.length >= 4) {
-        currentMat.descrizione = [
-          ...restTokens.slice(0, oaBlock.startIdx),
-          ...restTokens.slice(oaBlock.endIdx),
-        ].join(' ');
-        currentMat.ordinato = oaBlock.nums[0];
-        currentMat.ricevuto = oaBlock.nums[1];
-        currentMat.valoreResiduo = oaBlock.nums[2];
-        currentMat.prenotato = oaBlock.nums[3];
-      } else if (oaBlock) {
-        // Fewer than 4 — assign from right: prenotato, val_res, ricevuto, ordinato
-        currentMat.descrizione = [
-          ...restTokens.slice(0, oaBlock.startIdx),
-          ...restTokens.slice(oaBlock.endIdx),
-        ].join(' ');
-        const n = oaBlock.nums;
-        if (n.length >= 1) currentMat.prenotato = n[n.length - 1];
-        if (n.length >= 2) currentMat.valoreResiduo = n[n.length - 2];
-        if (n.length >= 3) currentMat.ricevuto = n[n.length - 3];
-        if (n.length >= 4) currentMat.ordinato = n[n.length - 4];
+      const rest = mm[3];
+      // Try to extract trailing numbers
+      const numPattern = /([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)\s*$/;
+      const nm = rest.match(numPattern);
+      if (nm) {
+        currentMat.descrizione = rest.slice(0, rest.length - nm[0].length).trim();
+        currentMat.ordinato = parseItalianNumber(nm[1]);
+        currentMat.ricevuto = parseItalianNumber(nm[2]);
+        currentMat.valoreResiduo = parseItalianNumber(nm[3]);
+        currentMat.prenotato = parseItalianNumber(nm[4]);
       } else {
-        currentMat.descrizione = restTokens.join(' ');
+        currentMat.descrizione = rest.trim();
       }
 
       current.materials.push(currentMat);
@@ -462,7 +537,6 @@ export function parseOL(lines) {
     const rm = line.match(OL_REF_ONLY_RE);
     if (rm) {
       if (pendingSupplier) {
-        // Supplier line came first → combine
         if (current) orders.push(current);
         current = buildOlOrder(rm[1], pendingSupplier.date, pendingSupplier.code, pendingSupplier.rest);
         currentMat = null;
@@ -478,7 +552,6 @@ export function parseOL(lines) {
     const sm = line.match(OL_SUPPLIER_RE);
     if (sm) {
       if (pendingRef) {
-        // Ref line came first → combine
         if (current) orders.push(current);
         current = buildOlOrder(pendingRef, sm[1], sm[2], sm[3]);
         currentMat = null;
@@ -532,31 +605,22 @@ export function parseOL(lines) {
         remaining = remaining.replace(cassMatch[0], '  ');
       }
 
-      // Extract qty and kg: find rightmost block of 2 consecutive pure numbers
-      // Everything else is description
-      const remTokens = remaining.split(/\s+/).filter(Boolean);
-      const olBlock = findNumBlock(remTokens, 2);
-      if (olBlock) {
-        currentMat.descrizione = [
-          ...remTokens.slice(0, olBlock.startIdx),
-          ...remTokens.slice(olBlock.endIdx),
-        ].join(' ');
-        if (olBlock.nums.length >= 1) currentMat.qtyInviata = olBlock.nums[0];
-        if (olBlock.nums.length >= 2) currentMat.kg = olBlock.nums[1];
-      } else {
-        currentMat.descrizione = remTokens.join(' ');
-      }
+      // Split remaining segments
+      const parts = remaining.split(/\s{2,}/).map(s => s.trim()).filter(Boolean);
+      if (parts.length > 0) currentMat.descrizione = parts[0].trim();
+
+      // Try to extract qty and kg from remaining numeric segments
+      const nums = parts.slice(1).filter(s => /^[\d.,]+$/.test(s)).map(s => parseItalianNumber(s));
+      if (nums.length >= 1) currentMat.qtyInviata = nums[0];
+      if (nums.length >= 2) currentMat.kg = nums[1];
 
       current.materials.push(currentMat);
       continue;
     }
 
-    // Material line before positions (material to receive) — skip these,
-    // Ester only wants the Pos. (return) rows, not the pre-position lines.
-    // Still match to set currentMat for ref attachment, but don't save.
+    // Material line before positions — skip (Ester only wants Pos. rows)
     const matLine = line.match(OL_MATERIAL_RE);
     if (matLine && !currentMat) {
-      // Don't push to materials — just track as context for potential refs
       currentMat = { _skip: true, refs: [] };
       continue;
     }
@@ -571,12 +635,6 @@ export function parseOL(lines) {
         refDate: parseDateDDMMYY(refm[5]),
         refQty: parseItalianNumber(refm[6]),
       });
-      continue;
-    }
-
-    // Continuation line — append to current material's description (OL)
-    if (currentMat && !currentMat._skip && line.trim()) {
-      currentMat.descrizione = (currentMat.descrizione + ' ' + line.trim()).trim();
     }
   }
 
@@ -606,7 +664,7 @@ export function detectPdfType(lines, filename) {
     if (/Lista ordini OL in scadenza/i.test(line)) return 'OL';
   }
 
-  // 4. For "Lista ordini OA in scadenza" — check if it's actually OP (headers start with *OP/)
+  // 4. For "Lista ordini OA in scadenza" — check if it's actually OP
   const first50 = lines.slice(0, 50);
   if (first50.some(l => /^\*?OP\/\d{4}\/\d{7}/.test(l))) return 'OP';
 
@@ -630,25 +688,18 @@ export function detectPdfType(lines, filename) {
   return null;
 }
 
-/** Classify orders from a mixed g00 file into OA/OP/ACCIAIERIA.
- *  - orderRef starts with "OP/" → OP
- *  - orderRef starts with "OA/" and ALL materials have codiceProdotto starting with "M#T" → ACCIAIERIA
- *  - otherwise → OA
- *  Returns { OA: [...], OP: [...], ACCIAIERIA: [...] } */
+/** Classify orders from a mixed g00 file into OA/OP/ACCIAIERIA. */
 export function classifyMixedOrders(orders) {
   const grouped = { OA: [], OP: [], ACCIAIERIA: [] };
 
   for (const order of orders) {
     if (order.orderRef.startsWith('OP/') || order.orderRef.startsWith('*OP/')) {
-      // Ensure orderRef is clean (without leading *)
       order.orderRef = order.orderRef.replace(/^\*/, '');
       grouped.OP.push(order);
     } else if (
       order.materials.length > 0 &&
       order.materials.every(m => m.codiceProdotto && /^M#T/i.test(m.codiceProdotto))
     ) {
-      // All materials are M#T* → ACCIAIERIA
-      // Rewrite orderRef: OA/2026/... → ACCIAIERIA/2026/...
       order.orderRef = order.orderRef.replace(/^OA\//, 'ACCIAIERIA/');
       grouped.ACCIAIERIA.push(order);
     } else {
@@ -671,3 +722,208 @@ export function parseByType(lines, type) {
     default: throw new Error(`Tipo PDF sconosciuto: ${type}`);
   }
 }
+```
+
+---
+
+## 6. PDF Extraction — `src/utils/pdfExtract.js`
+
+```js
+import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist';
+import workerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+
+GlobalWorkerOptions.workerSrc = workerSrc;
+
+const PAGE_BATCH = 10;
+
+function extractPageLines(content) {
+  const lineMap = new Map();
+  for (const item of content.items) {
+    if (!item.str) continue;
+    const y = Math.round(item.transform[5] * 10) / 10;
+    if (!lineMap.has(y)) lineMap.set(y, []);
+    lineMap.get(y).push({ x: item.transform[4], text: item.str });
+  }
+  const sortedYs = [...lineMap.keys()].sort((a, b) => b - a);
+  const lines = [];
+  for (const y of sortedYs) {
+    const items = lineMap.get(y).sort((a, b) => a.x - b.x);
+    const line = items.map(it => it.text).join(' ').trim();
+    if (line) lines.push(line);
+  }
+  return lines;
+}
+
+export async function extractPdfLines(input, onProgress) {
+  const data = input instanceof File ? await input.arrayBuffer() : input;
+  const pdf = await getDocument({ data }).promise;
+  const total = pdf.numPages;
+  const pageLines = new Array(total);
+  let done = 0;
+
+  for (let start = 0; start < total; start += PAGE_BATCH) {
+    const end = Math.min(start + PAGE_BATCH, total);
+    const batch = [];
+    for (let i = start; i < end; i++) {
+      batch.push(
+        pdf.getPage(i + 1)
+          .then(page => page.getTextContent())
+          .then(content => {
+            pageLines[i] = extractPageLines(content);
+            done++;
+            if (onProgress) onProgress({ current: done, total });
+          })
+      );
+    }
+    await Promise.all(batch);
+  }
+
+  const allLines = [];
+  for (const lines of pageLines) {
+    if (lines) allLines.push(...lines);
+  }
+  return allLines;
+}
+```
+
+---
+
+## 7. DB Layer — `src/utils/supplierDb.js`
+
+```js
+import { supabase } from './supabase.js';
+
+// ── Load orders ──────────────────────────────────────────────
+export async function loadSupplierOrders(orderType) {
+  let query = supabase.from('supplier_orders').select('*');
+  if (orderType) query = query.eq('order_type', orderType);
+  query = query.order('order_ref');
+  const { data, error } = await query;
+  console.log(`[loadSupplierOrders] type=${orderType}, rows=${data?.length ?? 'null'}, error=${error?.message ?? 'none'}`);
+  if (error) throw error;
+  return data;
+}
+
+// ── Load materials (paginated) ──────────────────────────────
+export async function loadOrderMaterials(orderIds) {
+  if (!orderIds.length) return [];
+  const PAGE = 1000;
+  const CHUNK = 200;
+  const all = [];
+
+  for (let c = 0; c < orderIds.length; c += CHUNK) {
+    const idChunk = orderIds.slice(c, c + CHUNK);
+    let from = 0;
+    while (true) {
+      const { data, error } = await supabase
+        .from('order_materials')
+        .select('*')
+        .in('order_id', idChunk)
+        .order('pos')
+        .range(from, from + PAGE - 1);
+      if (error) throw error;
+      all.push(...data);
+      if (data.length < PAGE) break;
+      from += PAGE;
+    }
+  }
+
+  console.log(`[loadOrderMaterials] ${orderIds.length} orders → ${all.length} materials`);
+  return all;
+}
+
+// ── Deadline helpers ─────────────────────────────────────────
+// deadlineRangeFilter, countDeadlines, loadDeadlineRows
+// (paginated, loads ALL rows for a date range)
+
+// ── Refs ─────────────────────────────────────────────────────
+// loadRefsForOrder(orderId) — on-demand per order
+
+// ── Order map ────────────────────────────────────────────────
+// searchOrders(query) — fuzzy search
+// findLinkedOrders(orderId, orderRef) — bidirectional, hybrid:
+//   - Forward "F" refs → ref_order (reliable)
+//   - Forward "OV"/"OL"/"BPV" refs → name-based matching (ref_order unreliable)
+//   - Ghost nodes for unresolved refs
+//   - Reverse: other orders' refs pointing to this order
+
+// ── Notes CRUD ───────────────────────────────────────────────
+// loadOrderNotes, saveOrderNote, deleteOrderNote
+
+// ── Import (batch) ───────────────────────────────────────────
+// importParsedOrders(orderType, parsedOrders, onProgress)
+//   - Batch upsert orders (50/batch)
+//   - Batch delete old refs
+//   - Batch upsert materials (200/batch)
+//   - Batch insert refs (500/batch)
+```
+
+See full file at `src/utils/supplierDb.js` (469 lines).
+
+---
+
+## 8. React Components
+
+### `src/components/SupplierMonitor.jsx` (main layout)
+
+- Tabs: Scadenze, OV, OA, OP, OL, Acciaieria, Mappa + Upload button (right-aligned)
+- Urgency badges per tab computed from materials
+- Return-to-previous-tab navigation
+- Wraps everything in `SupplierDataProvider`
+
+### `src/components/supplier/OrderList.jsx` (order detail)
+
+- Search across order_ref, client_name, supplier_name, materials
+- Expandable order cards with:
+  - Header: order_ref + client_ref (OV), date, name, material count, notes count
+  - Expanded: supplier info, phone (tel: link), value/weight summaries
+  - Materials table with type-specific columns:
+    - **OV**: Giacenza, Impegnato, Disponibile (calculated, red if negative), In Ordine, Peso
+    - **OA/OP/ACCIAIERIA**: Ordinato, Ricevuto, Val. Res., Scad. Cliente (earliest ref_date)
+    - **OL**: Qty, Kg, Status, Bolla, Cassone
+  - All types: Scadenza, Scad. Effettiva (editable), Codice, Descrizione, Rif., Note
+- Deadline coloring: red (<0d), orange (<=3d), yellow (<=7d), green (<=14d)
+- Inline note editing modal
+
+### `src/components/supplier/DeadlineDashboard.jsx`
+
+- 5 range cards: Scaduti, Oggi, 7g, 14g, 30g (with counts from DB)
+- Filters: role (Fornitori/Clienti), search text, doc type toggles
+- Grouped by supplier view with expandable sections
+- Flat list view toggle
+- Detail table with sortable deadlines
+
+### `src/components/supplier/OrderMap.jsx`
+
+- Debounced search → SVG flow diagram
+- 2-level graph traversal (direct + one-hop)
+- Ghost nodes (dashed border, grey) for referenced but non-existent orders
+- Column layout by type: OV → OA → ACCIAIERIA → OP → OL
+
+### `src/components/supplier/SupplierUpload.jsx`
+
+- Drag-and-drop PDF upload with 3-phase progress:
+  1. PDF extraction (page N/M)
+  2. Parsing (found N orders)
+  3. DB save (N/M orders)
+- Mixed file support: classifies g00 into OA/OP/ACCIAIERIA with breakdown
+- File type reference: SOG_OrdScadG22 (OV), SOG_OrdScadG04 (OL), sog_ordscadg00 (mixed)
+
+### `src/hooks/useSupplierData.jsx` (state management)
+
+- Initial load: all 5 order types + all materials (paginated)
+- On-demand ref loading per order (fetchRefs)
+- Import: batch upsert + reload affected type + clear ref cache
+- Note CRUD with full reload
+- Deadline update with optimistic state sync
+
+---
+
+## 9. Key Architecture Notes
+
+- **PDF text extraction**: pdfjs-dist with coordinate-based line reconstruction, 10-page parallel batches
+- **Ref linking**: OV→OA/OP/OL via reliable ref_order; OA/OP→OV via client_name ILIKE (ref_order contains non-matching internal numbers)
+- **Deduplication**: OV by codiceProdotto+pos; OA/OP by codiceProdotto+scadenza
+- **File detection**: SOG filenames (g22/g04/g00) > legacy filenames > content-based > header-based
+- **Mixed file**: parsed as OAOP without forceType, then classified per-order by orderRef prefix + material code pattern (M#T* = ACCIAIERIA)
+- **DB column `cassone`**: added to migration.sql but may need `ALTER TABLE order_materials ADD COLUMN cassone TEXT` on existing DBs
