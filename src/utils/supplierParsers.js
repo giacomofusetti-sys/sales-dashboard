@@ -35,30 +35,21 @@ function buildRefOrder(type, year, num) {
   return `${type}/${year}/${num.padStart(padLen, '0')}`;
 }
 
-// ── OV Parser ─────────────────────────────────────────────────
-
-const OV_HEADER_RE = /^(OV\/\d{4}\/\d{5})\s*-\s*(.*)/;
-const OV_CLIENT_RE = /C\s+(\d+)\s+(.+?)(?:\s{2,}|\s+\d{2}\/\d{2}\/\d{2})/;
-const OV_CLIENT_REF_RE = /(?:Vs\.?\s*Rif\.?|Rif\.?\s*Cliente|N\.?\s*Ord\.?\s*Cl\.?|Rif\.?)\s*:?\s*(\S+.*?)$/i;
-const OV_DATE_RE = /(\d{2}\/\d{2}\/\d{2})/;
-const OV_MATERIAL_RE = /^(?:(\d+)\s+)?(\d{2}\/\d{2}\/\d{2})\s+([A-Z0-9]{1,5}#[A-Z0-9]+)\s+(.*)/;
-const OV_SUPPLIER_RE = /^F\s+(\d+)\s+(.*?)\s+(OA|OP|OL)\/(\d{4}\/\d{7})\s+(\d{2}\/\d{2}\/\d{2})\s+([\d.,]+)\s+(\d{2}\/\d{2}\/\d{2})/;
-const OV_FOOTER_RE = /^Valore Residuo Ordine\s+([\d.,]+)/;
-const OV_PESO_RE = /Peso Totale Ordine\s+([\d.,]+)/;
-
-/** Test if a token is a pure Italian number: digits, dots (thousands), commas (decimal).
- *  Must not be part of product specs like M30x3000, 3,5x19, A2-70, DIN 933 */
+/** Test if a token is a pure Italian number */
 const PURE_NUM_RE = /^[\d.,]+$/;
-const DATE_RE = /^\d{2}\/\d{2}\/\d{2}$/;
+const DATE_SHORT_RE = /^\d{2}\/\d{2}\/\d{2}$/;
 
-/** Find the best block of N consecutive pure-number tokens in a token array.
- *  Returns { startIdx, endIdx, nums[] } or null.
- *  Prefers rightmost block of >= targetLen. Falls back to shorter runs only
- *  if they have at least minLen tokens (default: targetLen / 2, min 2). */
+/** Filter out page headers/footers that pdfjs extracts as text lines */
+const PAGE_NOISE_RE = /^(?:Utente|ESTER\s+Pagina|\d{2}:\d{2}$|\d{4}$|Lista ordini|COMVITEA\s+SRL|Rif\.\s+(?:OV|OA|OL|OP|Pos)|Scad\.\s+Materiale|Cons\.Rich|Fornitore\s+Rif|Materiale\s+(?:Inviato|da\s+Ricevere)|Scadenza\s+Materiale\s+Ordinato|Totale\s+valore|Cliente\s+Telefono|Kg\s+Trattamento)/;
+function isPageNoise(line) {
+  return PAGE_NOISE_RE.test(line.trim());
+}
+
+/** Find the best block of N consecutive pure-number tokens.
+ *  Prefers rightmost run of >= targetLen. Falls back to shorter runs
+ *  only if they have at least minLen tokens (max(2, targetLen/2)). */
 function findNumBlock(tokens, targetLen) {
   const isNum = tokens.map(t => PURE_NUM_RE.test(t));
-
-  // Find all runs of consecutive numbers
   const runs = [];
   let runStart = -1;
   for (let i = 0; i <= tokens.length; i++) {
@@ -71,12 +62,9 @@ function findNumBlock(tokens, targetLen) {
       }
     }
   }
-
   if (!runs.length) return null;
 
   const minLen = Math.max(2, Math.ceil(targetLen / 2));
-
-  // Prefer rightmost run of >= targetLen; fallback to rightmost run of >= minLen
   let best = null;
   for (const run of runs) {
     if (run.len >= targetLen) {
@@ -90,7 +78,6 @@ function findNumBlock(tokens, targetLen) {
       }
     }
   }
-
   if (!best) return null;
   return {
     startIdx: best.startIdx,
@@ -99,31 +86,38 @@ function findNumBlock(tokens, targetLen) {
   };
 }
 
-// Extract fields from OV material rest string.
-// Looks for a block of 4 consecutive pure numbers (giacenza, impegnato, in_ordine, peso)
-// and an optional date (cons_richiesta) adjacent to the block.
-// Everything else is description (before + after the block).
+// ── OV Parser ─────────────────────────────────────────────────
+
+const OV_HEADER_RE = /^(OV\/\d{4}\/\d{5})\s*-\s*(.*)/;
+const OV_CLIENT_RE = /C\s+(\d+)\s+(.+?)(?:\s{2,}|\s+\d{2}\/\d{2}\/\d{2})/;
+const OV_CLIENT_REF_RE = /(?:Vs\.?\s*Rif\.?|Rif\.?\s*Cliente|N\.?\s*Ord\.?\s*Cl\.?|Rif\.?)\s*:?\s*(\S+.*?)$/i;
+const OV_DATE_RE = /(\d{2}\/\d{2}\/\d{2})/;
+const OV_MATERIAL_RE = /^(?:(\d+)\s+)?(\d{2}\/\d{2}\/\d{2})\s+([A-Z0-9]{1,5}#[A-Z0-9]+)\s+(.*)/;
+const OV_SUPPLIER_RE = /^F\s+(\d+)\s+(.*?)\s+(OA|OP|OL)\/(\d{4}\/\d{7})\s+(\d{2}\/\d{2}\/\d{2})\s+([\d.,]+)\s+(\d{2}\/\d{2}\/\d{2})/;
+const OV_FOOTER_RE = /^Valore Residuo Ordine\s+([\d.,]+)/;
+const OV_PESO_RE = /Peso Totale Ordine\s+([\d.,]+)/;
+
+// In pdfjs output, the OV rest string contains only 3 numbers (giac/imp/ord).
+// Peso comes on a separate line. Search for block of 3.
 function parseOvMaterialFields(rest) {
-  const result = { descrizione: '', consRichiesta: null, giacenza: null, impegnato: null, inOrdine: null, peso: null };
+  const result = { descrizione: '', consRichiesta: null, giacenza: null, impegnato: null, inOrdine: null };
   const tokens = rest.split(/\s+/).filter(Boolean);
   if (!tokens.length) return result;
 
-  const block = findNumBlock(tokens, 4);
+  const block = findNumBlock(tokens, 3);
   if (!block) {
-    // No numeric block found — everything is description
     result.descrizione = tokens.join(' ');
     return result;
   }
 
-  // Check for date adjacent to block (before or after)
-  if (block.startIdx > 0 && DATE_RE.test(tokens[block.startIdx - 1])) {
+  // Check for date adjacent to block (cons_richiesta)
+  if (block.startIdx > 0 && DATE_SHORT_RE.test(tokens[block.startIdx - 1])) {
     result.consRichiesta = parseDateDDMMYY(tokens[block.startIdx - 1]);
-    // Description = tokens before date + tokens after block
     result.descrizione = [
       ...tokens.slice(0, block.startIdx - 1),
       ...tokens.slice(block.endIdx),
     ].join(' ');
-  } else if (block.endIdx < tokens.length && DATE_RE.test(tokens[block.endIdx])) {
+  } else if (block.endIdx < tokens.length && DATE_SHORT_RE.test(tokens[block.endIdx])) {
     result.consRichiesta = parseDateDDMMYY(tokens[block.endIdx]);
     result.descrizione = [
       ...tokens.slice(0, block.startIdx),
@@ -136,22 +130,15 @@ function parseOvMaterialFields(rest) {
     ].join(' ');
   }
 
-  // Assign from left to right within block: giacenza, impegnato, in_ordine, peso
+  // Assign: giacenza, impegnato, in_ordine (left to right)
   const n = block.nums;
-  if (n.length >= 4) {
+  if (n.length >= 3) {
     result.giacenza = n[0];
     result.impegnato = n[1];
     result.inOrdine = n[2];
-    result.peso = n[3];
-  } else if (n.length === 3) {
+  } else if (n.length === 2) {
     result.impegnato = n[0];
     result.inOrdine = n[1];
-    result.peso = n[2];
-  } else if (n.length === 2) {
-    result.inOrdine = n[0];
-    result.peso = n[1];
-  } else if (n.length === 1) {
-    result.peso = n[0];
   }
 
   return result;
@@ -161,32 +148,37 @@ export function parseOV(lines) {
   const orders = [];
   let current = null;
   let currentMat = null;
+  let pendingConsRichiesta = null;
 
   for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    // Skip page noise
+    if (isPageNoise(trimmed)) continue;
+
     // Order header
-    const hm = line.match(OV_HEADER_RE);
+    const hm = trimmed.match(OV_HEADER_RE);
     if (hm) {
       if (current) orders.push(current);
       current = {
         orderRef: hm[1],
-        rawHeader: line,
+        rawHeader: trimmed,
         materials: [],
       };
       currentMat = null;
+      pendingConsRichiesta = null;
 
-      // Extract date
       const rest = hm[2];
       const dm = rest.match(OV_DATE_RE);
       if (dm) current.orderDate = parseDateDDMMYY(dm[1]);
 
-      // Extract client
       const cm = line.match(OV_CLIENT_RE);
       if (cm) {
         current.clientCode = cm[1];
         current.clientName = cm[2].trim();
       }
 
-      // Extract client reference (Vs. Rif., Rif. Cliente, etc.)
       const crm = rest.match(OV_CLIENT_REF_RE);
       if (crm) current.clientRef = crm[1].trim();
       continue;
@@ -195,17 +187,24 @@ export function parseOV(lines) {
     if (!current) continue;
 
     // Footer — valore residuo
-    const fm = line.match(OV_FOOTER_RE);
+    const fm = trimmed.match(OV_FOOTER_RE);
     if (fm) {
       current.valoreResiduo = parseItalianNumber(fm[1]);
-      const pm = line.match(OV_PESO_RE);
+      const pm = trimmed.match(OV_PESO_RE);
       if (pm) current.pesoTotale = parseItalianNumber(pm[1]);
-      currentMat = null; // footer ends material context
+      currentMat = null;
+      pendingConsRichiesta = null;
+      continue;
+    }
+
+    // Standalone date line before material → cons_richiesta
+    if (DATE_SHORT_RE.test(trimmed)) {
+      pendingConsRichiesta = parseDateDDMMYY(trimmed);
       continue;
     }
 
     // Material line
-    const mm = line.match(OV_MATERIAL_RE);
+    const mm = trimmed.match(OV_MATERIAL_RE);
     if (mm) {
       const fields = parseOvMaterialFields(mm[4]);
       currentMat = {
@@ -213,19 +212,20 @@ export function parseOV(lines) {
         scadenza: parseDateDDMMYY(mm[2]),
         codiceProdotto: mm[3],
         descrizione: fields.descrizione,
-        consRichiesta: fields.consRichiesta,
+        consRichiesta: fields.consRichiesta || pendingConsRichiesta,
         giacenza: fields.giacenza,
         impegnato: fields.impegnato,
         inOrdine: fields.inOrdine,
-        peso: fields.peso,
+        peso: null, // peso comes on next line in pdfjs
         refs: [],
       };
+      pendingConsRichiesta = null;
       current.materials.push(currentMat);
       continue;
     }
 
     // Supplier ref line (within OV)
-    const sm = line.match(OV_SUPPLIER_RE);
+    const sm = trimmed.match(OV_SUPPLIER_RE);
     if (sm && currentMat) {
       currentMat.refs.push({
         refType: 'F',
@@ -239,16 +239,21 @@ export function parseOV(lines) {
       continue;
     }
 
-    // Continuation line — append to current material's description
-    // Must not match any other pattern and must follow a material line
-    if (currentMat && line.trim()) {
-      currentMat.descrizione = (currentMat.descrizione + ' ' + line.trim()).trim();
+    // Single pure number after material → peso
+    if (currentMat && currentMat.peso == null && PURE_NUM_RE.test(trimmed)) {
+      currentMat.peso = parseItalianNumber(trimmed);
+      continue;
+    }
+
+    // Continuation line — append to description
+    if (currentMat && trimmed) {
+      currentMat.descrizione = (currentMat.descrizione + ' ' + trimmed).trim();
     }
   }
 
   if (current) orders.push(current);
 
-  // Deduplicate materials: by codiceProdotto + pos (more robust than scadenza)
+  // Deduplicate materials: by codiceProdotto + pos
   for (const order of orders) {
     const seen = new Map();
     for (const mat of order.materials) {
@@ -275,9 +280,6 @@ export function parseOV(lines) {
 // ── OA/OP/Acciaieria Parser ──────────────────────────────────
 
 const OAOP_HEADER_RE = /^\*?(OA|OP)\/(\d{4}\/\d{7})\s+(\d{2}\/\d{2}\/\d{2})\s*F\s+(\d+)\s+(.*)/;
-// Material line must start with date + product code (with #) — require at least
-// some content after, but NOT match continuation/description lines that happen
-// to start with a date (those won't have a # code immediately after)
 const OAOP_MATERIAL_RE = /^(\d{2}\/\d{2}\/\d{2})\s+([A-Z0-9]{1,5}#[A-Z0-9]+)\s+(.*)/;
 const OAOP_REF_RE = /^(OV|OL|BPV)[.\s](\d{4})[.\s](\d+)\s+(.+?)\s+(\d{2}\/\d{2}\/\d{2})\s+([\d.,]+)/;
 const OAOP_FOOTER_RE = /^Tot\.\s*peso\s*res\.\s*([\d.,]+)/i;
@@ -288,8 +290,12 @@ export function parseOAOP(lines, forceType) {
   let currentMat = null;
 
   for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    if (isPageNoise(trimmed)) continue;
+
     // Order header
-    const hm = line.match(OAOP_HEADER_RE);
+    const hm = trimmed.match(OAOP_HEADER_RE);
     if (hm) {
       if (current) orders.push(current);
       const type = forceType || hm[1];
@@ -299,12 +305,11 @@ export function parseOAOP(lines, forceType) {
         supplierCode: hm[4],
         supplierName: '',
         supplierPhone: '',
-        rawHeader: line,
+        rawHeader: trimmed,
         materials: [],
       };
       currentMat = null;
 
-      // Split supplier name and phone — phone is usually at the end
       const rest = hm[5].trim();
       const phoneMatch = rest.match(/\s+([\d\s/+()-]{6,})$/);
       if (phoneMatch) {
@@ -319,14 +324,14 @@ export function parseOAOP(lines, forceType) {
     if (!current) continue;
 
     // Footer
-    const fm = line.match(OAOP_FOOTER_RE);
+    const fm = trimmed.match(OAOP_FOOTER_RE);
     if (fm) {
       current.totPesoRes = parseItalianNumber(fm[1]);
       continue;
     }
 
     // Material line
-    const mm = line.match(OAOP_MATERIAL_RE);
+    const mm = trimmed.match(OAOP_MATERIAL_RE);
     if (mm) {
       currentMat = {
         scadenza: parseDateDDMMYY(mm[1]),
@@ -335,7 +340,6 @@ export function parseOAOP(lines, forceType) {
         refs: [],
       };
 
-      // Parse: DESCRIZIONE  ORDINATO  RICEVUTO  VAL_RES  PRENOTATO
       // Find block of 4 consecutive pure numbers; rest is description
       const restTokens = mm[3].split(/\s+/).filter(Boolean);
       const oaBlock = findNumBlock(restTokens, 4);
@@ -349,7 +353,6 @@ export function parseOAOP(lines, forceType) {
         currentMat.valoreResiduo = oaBlock.nums[2];
         currentMat.prenotato = oaBlock.nums[3];
       } else if (oaBlock) {
-        // Fewer than 4 — assign from right: prenotato, val_res, ricevuto, ordinato
         currentMat.descrizione = [
           ...restTokens.slice(0, oaBlock.startIdx),
           ...restTokens.slice(oaBlock.endIdx),
@@ -368,7 +371,7 @@ export function parseOAOP(lines, forceType) {
     }
 
     // Reference/booking line
-    const rm = line.match(OAOP_REF_RE);
+    const rm = trimmed.match(OAOP_REF_RE);
     if (rm && currentMat) {
       currentMat.refs.push({
         refType: rm[1],
@@ -382,8 +385,7 @@ export function parseOAOP(lines, forceType) {
 
   if (current) orders.push(current);
 
-  // Deduplicate materials within each order: same logic as parseOV —
-  // if two materials share codiceProdotto + scadenza, keep the one with more data.
+  // Deduplicate materials
   for (const order of orders) {
     const seen = new Map();
     for (const mat of order.materials) {
@@ -409,15 +411,156 @@ export function parseOAOP(lines, forceType) {
 
 // ── OL Parser ─────────────────────────────────────────────────
 
-// Single-line header (pdfplumber): "OL/2026/0000945 23/02/26 F 2411 ALFA OSSIDAZIONE..."
 const OL_HEADER_SINGLE_RE = /^(OL\/\d{4}\/\d{7})\s+(\d{2}\/\d{2}\/\d{2})\s+F\s+(\d+)\s+(.*)/;
-// Split header (pdfjs) — ref on its own line
 const OL_REF_ONLY_RE = /^(OL\/\d{4}\/\d{7})\s*$/;
-// Split header (pdfjs) — date+supplier on separate line
 const OL_SUPPLIER_RE = /^(\d{2}\/\d{2}\/\d{2})\s+F\s+(\d+)\s+(.*)/;
 const OL_POS_RE = /^Pos\.\s+(\d+)\s+(\d{2}\/\d{2}\/\d{2})\s+(\S+)\s+(.*)/;
 const OL_MATERIAL_RE = /^([A-Z0-9]{1,5}#[A-Z0-9]+)\s+(.*)/;
 const OL_REF_RE = /^(OV|OL|BPV)[.\s](\d{4})[.\s](\d+)\s+(.+?)\s+(\d{2}\/\d{2}\/\d{2})\s+([\d.,]+)/;
+
+// Known treatment patterns for OL parsing (right-to-left extraction)
+const OL_TRATTAMENTO_PATTERNS = [
+  /ZINCATURA\s+A\s+CALDO\s+ASTM\s+A153/i,
+  /ZINC\.?\s*BIANCO\s+DEIDROGENATO\s+[\d-]+\s*[μu]/i,
+  /ZINCATO\s+BIANCO\s+[\d-]+\s*[μu]/i,
+  /FOSFATAZIONE\s+(?:AL\s+MN\s+OLIATA|Zn\s+OLIATA\s+NERA|Zn)/i,
+  /GEOMET\s+\d+[A-Z]?(?:\+PLUS\s+[A-Z]+)?/i,
+  /XYLAN\s+[\d\s]+(?:BLU|ROSSO|VERDE)?(?:\s+RAL\s+\d+)?/i,
+  /Zinconichel\s+(?:DH\s+senza\s+sigillante|triv\.\s*trasp)/i,
+  /ZnNi\s+DH\s+(?:\+XYLAN\s+\d+\s+\w+|senza\s+sigillante)/i,
+  /ZINCAT\+XYLAN\s+BLU\s+\d+/i,
+  /Zinc\.?\s*(?:a\s+)?caldo\s*\+?\s*(?:Xylan\s+\d+\s+\w+)?/i,
+  /ZINCATURA\s+BIANCA\s+STATICA/i,
+  /BRUNITO/i,
+  /TAGLIO\s+E\s+SMUSSO/i,
+  /TAGLIO\+SPIANATURA[^$]*/i,
+  /TAGLIARE\s+E\s+FILETTARE/i,
+  /LAVORAZIONE\s+MECCANICA/i,
+  /SPIANATURA(?:\+MARCATURA)?\s+TESTA/i,
+  /MINORAZIONE\s+FILETTO(?:\s+x\s+ZCALDO)?/i,
+  /MINORATO\s+[\d.,]+/i,
+  /MAGGIORAZIONE\s+FILETTO/i,
+  /RIPASSATURA\s+FILETTO/i,
+  /RESILIENZA/i,
+  /Collaudo\s+AD-W7/i,
+  /RICAVARE\s+PARTIC\.\s+A\s+DISEGNO/i,
+  /PIEGATURA/i,
+  /TEMPRA\s+A\s+INDUZIONE/i,
+  /DECAPAGGIO/i,
+  /3\.2\s+c\/INAIL/i,
+  /Xylan\s+01-411\+Xylan\s+1424\s+Blu/i,
+];
+
+/** Parse the rest of an OL Pos. line from right to left.
+ *  Format: DESC QTY KG TRATTAMENTO [BOLLA_NUM BOLLA_DATE] [CASSONE_NUM SCAD2] [STATUS]
+ *
+ *  Extraction order:
+ *  1. Status (Trasferimento...) from end
+ *  2. Tail (date, number) pairs from end — up to 2
+ *     - 2 pairs: first=bolla, second=cassone
+ *     - 1 pair with status: cassone; without status: bolla
+ *     - number without date: cassone
+ *  3. Trattamento (known patterns)
+ *  4. KG, QTY (rightmost consecutive pure nums)
+ *  5. Rest = description */
+function parseOlPosFields(rest) {
+  const result = {
+    descrizione: '', qtyInviata: null, kg: null,
+    trattamento: null, bolla: null, cassone: null, status: null,
+  };
+
+  let remaining = rest;
+
+  // 1. Status at end
+  const statusMatch = remaining.match(/(Trasferimento\s+(?:Completo|Parziale))\s*$/i);
+  if (statusMatch) {
+    result.status = statusMatch[1].trim();
+    remaining = remaining.slice(0, -statusMatch[0].length).trim();
+  }
+
+  // 2. Extract tail (date, number) pairs from right — up to 2
+  const tailPairs = []; // { num, date } — date may be null
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let date = null;
+    const dateM = remaining.match(/\s+(\d{2}\/\d{2}\/\d{2})\s*$/);
+    if (dateM) {
+      date = dateM[1];
+      remaining = remaining.slice(0, -dateM[0].length).trim();
+    }
+    const numM = remaining.match(/\s+([\d.,]+)\s*$/);
+    if (numM && PURE_NUM_RE.test(numM[1])) {
+      tailPairs.unshift({ num: numM[1].replace(/\./g, ''), date });
+      remaining = remaining.slice(0, -numM[0].length).trim();
+    } else {
+      if (date) remaining = remaining + ' ' + date; // put date back
+      break;
+    }
+  }
+
+  if (tailPairs.length === 2) {
+    // 2 pairs: first = bolla (num+date), second = cassone
+    const bolla = tailPairs[0];
+    const cass = tailPairs[1];
+    if (bolla.date) result.bolla = `DDL.${bolla.num}.${bolla.date}`;
+    result.cassone = cass.num;
+  } else if (tailPairs.length === 1) {
+    const pair = tailPairs[0];
+    const numVal = parseInt(pair.num, 10);
+    if (result.status) {
+      // With status → always cassone
+      result.cassone = pair.num;
+    } else if (pair.date && numVal >= 1000) {
+      // No status, large number (>=1000) with date → bolla (DDL document number)
+      result.bolla = `DDL.${pair.num}.${pair.date}`;
+    } else {
+      // No status, small number or no date → cassone
+      result.cassone = pair.num;
+    }
+  }
+
+  // Fallback: explicit bolla pattern anywhere
+  if (!result.bolla) {
+    const bollaExplicit = remaining.match(/((?:DDL|BPL|DDT)[.\s]\d+[.\s]\d{2}\/\d{2}\/\d{2})/i);
+    if (bollaExplicit) {
+      result.bolla = bollaExplicit[1].trim();
+      remaining = remaining.replace(bollaExplicit[0], ' ').trim();
+    }
+  }
+  // Fallback: explicit cassone
+  if (!result.cassone) {
+    const cassExplicit = remaining.match(/(?:Cass(?:one)?\.?\s*)(\d+)/i);
+    if (cassExplicit) {
+      result.cassone = cassExplicit[1];
+      remaining = remaining.replace(cassExplicit[0], ' ').trim();
+    }
+  }
+
+  // 3. Extract trattamento
+  for (const pat of OL_TRATTAMENTO_PATTERNS) {
+    const tm = remaining.match(pat);
+    if (tm) {
+      result.trattamento = tm[0].trim();
+      remaining = remaining.replace(pat, ' ').replace(/\s{2,}/g, ' ').trim();
+      break;
+    }
+  }
+
+  // 4. QTY and KG: exactly the last 2 (or 1) pure-number tokens
+  // Don't walk further — numbers deeper in the string are part of description (e.g. "DIN 938")
+  const tokens = remaining.split(/\s+/).filter(Boolean);
+  const len = tokens.length;
+  if (len >= 2 && PURE_NUM_RE.test(tokens[len - 1]) && PURE_NUM_RE.test(tokens[len - 2])) {
+    result.qtyInviata = parseItalianNumber(tokens[len - 2]);
+    result.kg = parseItalianNumber(tokens[len - 1]);
+    tokens.length = len - 2;
+  } else if (len >= 1 && PURE_NUM_RE.test(tokens[len - 1])) {
+    result.qtyInviata = parseItalianNumber(tokens[len - 1]);
+    tokens.length = len - 1;
+  }
+
+  result.descrizione = tokens.join(' ').trim();
+  return result;
+}
 
 function buildOlOrder(orderRef, dateStr, supplierCode, rest) {
   const order = {
@@ -443,12 +586,16 @@ export function parseOL(lines) {
   const orders = [];
   let current = null;
   let currentMat = null;
-  let pendingRef = null;       // OL ref waiting for its supplier line
-  let pendingSupplier = null;  // supplier line waiting for its OL ref
+  let pendingRef = null;
+  let pendingSupplier = null;
 
   for (const line of lines) {
-    // Single-line header (pdfplumber format)
-    const hm = line.match(OL_HEADER_SINGLE_RE);
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    if (isPageNoise(trimmed)) continue;
+
+    // Single-line header
+    const hm = trimmed.match(OL_HEADER_SINGLE_RE);
     if (hm) {
       pendingRef = null;
       pendingSupplier = null;
@@ -458,11 +605,10 @@ export function parseOL(lines) {
       continue;
     }
 
-    // Split header: ref-only line "OL/2026/0000945"
-    const rm = line.match(OL_REF_ONLY_RE);
+    // Split header: ref-only line
+    const rm = trimmed.match(OL_REF_ONLY_RE);
     if (rm) {
       if (pendingSupplier) {
-        // Supplier line came first → combine
         if (current) orders.push(current);
         current = buildOlOrder(rm[1], pendingSupplier.date, pendingSupplier.code, pendingSupplier.rest);
         currentMat = null;
@@ -474,11 +620,10 @@ export function parseOL(lines) {
       continue;
     }
 
-    // Split header: supplier line "23/02/26  F 2411  ALFA OSSIDAZIONE..."
-    const sm = line.match(OL_SUPPLIER_RE);
+    // Split header: supplier line
+    const sm = trimmed.match(OL_SUPPLIER_RE);
     if (sm) {
       if (pendingRef) {
-        // Ref line came first → combine
         if (current) orders.push(current);
         current = buildOlOrder(pendingRef, sm[1], sm[2], sm[3]);
         currentMat = null;
@@ -490,79 +635,41 @@ export function parseOL(lines) {
       continue;
     }
 
-    // Any other line clears pending state
     pendingRef = null;
     pendingSupplier = null;
 
     if (!current) continue;
 
-    // Position line (main material/position entry for OL)
-    const pm = line.match(OL_POS_RE);
+    // Position line
+    const pm = trimmed.match(OL_POS_RE);
     if (pm) {
+      const fields = parseOlPosFields(pm[4]);
       currentMat = {
         pos: pm[1],
         scadenza: parseDateDDMMYY(pm[2]),
         codiceProdotto: pm[3],
-        descrizione: '',
+        descrizione: fields.descrizione,
+        qtyInviata: fields.qtyInviata,
+        kg: fields.kg,
+        trattamento: fields.trattamento,
+        bolla: fields.bolla,
+        cassone: fields.cassone,
+        status: fields.status,
         refs: [],
       };
-
-      // Parse remaining: DESCRIZIONE  QTY  KG  TRATTAMENTO  BOLLA  CASSONE  STATUS
-      const rest = pm[4];
-      let remaining = rest;
-
-      // Try to find "Trasferimento" status at end
-      const statusMatch = remaining.match(/(Trasferimento\s+\w+)\s*$/i);
-      if (statusMatch) {
-        currentMat.status = statusMatch[1].trim();
-        remaining = remaining.slice(0, remaining.length - statusMatch[0].length);
-      }
-
-      // Extract bolla (DDL.nnn.dd/mm/yy or BPL.nnn.dd/mm/yy)
-      const bollaMatch = remaining.match(/((?:DDL|BPL|DDT)[.\s]\d+[.\s]\d{2}\/\d{2}\/\d{2})/i);
-      if (bollaMatch) {
-        currentMat.bolla = bollaMatch[1].trim();
-        remaining = remaining.replace(bollaMatch[0], '  ');
-      }
-
-      // Extract cassone number
-      const cassMatch = remaining.match(/(?:Cass(?:one)?\.?\s*)(\d+)/i);
-      if (cassMatch) {
-        currentMat.cassone = cassMatch[1];
-        remaining = remaining.replace(cassMatch[0], '  ');
-      }
-
-      // Extract qty and kg: find rightmost block of 2 consecutive pure numbers
-      // Everything else is description
-      const remTokens = remaining.split(/\s+/).filter(Boolean);
-      const olBlock = findNumBlock(remTokens, 2);
-      if (olBlock) {
-        currentMat.descrizione = [
-          ...remTokens.slice(0, olBlock.startIdx),
-          ...remTokens.slice(olBlock.endIdx),
-        ].join(' ');
-        if (olBlock.nums.length >= 1) currentMat.qtyInviata = olBlock.nums[0];
-        if (olBlock.nums.length >= 2) currentMat.kg = olBlock.nums[1];
-      } else {
-        currentMat.descrizione = remTokens.join(' ');
-      }
-
       current.materials.push(currentMat);
       continue;
     }
 
-    // Material line before positions (material to receive) — skip these,
-    // Ester only wants the Pos. (return) rows, not the pre-position lines.
-    // Still match to set currentMat for ref attachment, but don't save.
-    const matLine = line.match(OL_MATERIAL_RE);
+    // Material line before positions — skip
+    const matLine = trimmed.match(OL_MATERIAL_RE);
     if (matLine && !currentMat) {
-      // Don't push to materials — just track as context for potential refs
       currentMat = { _skip: true, refs: [] };
       continue;
     }
 
     // Reference line
-    const refm = line.match(OL_REF_RE);
+    const refm = trimmed.match(OL_REF_RE);
     if (refm && currentMat) {
       currentMat.refs.push({
         refType: refm[1],
@@ -574,9 +681,9 @@ export function parseOL(lines) {
       continue;
     }
 
-    // Continuation line — append to current material's description (OL)
-    if (currentMat && !currentMat._skip && line.trim()) {
-      currentMat.descrizione = (currentMat.descrizione + ' ' + line.trim()).trim();
+    // Continuation line — append to description
+    if (currentMat && !currentMat._skip && trimmed) {
+      currentMat.descrizione = (currentMat.descrizione + ' ' + trimmed).trim();
     }
   }
 
@@ -589,33 +696,26 @@ export function parseOL(lines) {
 export function detectPdfType(lines, filename) {
   const fname = (filename || '').toLowerCase();
 
-  // 1. New SOG filename convention (most reliable)
-  //    g22 → OV, g04 → OL, g00 → MIXED (OA+OP+Acciaieria)
   if (/g22/i.test(fname)) return 'OV';
   if (/g04/i.test(fname)) return 'OL';
   if (/g00/i.test(fname)) return 'MIXED';
 
-  // 2. Legacy filename patterns (backward compat)
   if (fname.includes('acciaieria')) return 'ACCIAIERIA';
   if (fname.includes('_ol') || fname.includes('ol_')) return 'OL';
   if (fname.includes('_op') || fname.includes('op_')) return 'OP';
 
-  // 3. Content-based detection for OV vs OA (these have distinct titles)
   for (const line of lines.slice(0, 10)) {
     if (/Lista ordini OV in scadenza/i.test(line)) return 'OV';
     if (/Lista ordini OL in scadenza/i.test(line)) return 'OL';
   }
 
-  // 4. For "Lista ordini OA in scadenza" — check if it's actually OP (headers start with *OP/)
   const first50 = lines.slice(0, 50);
   if (first50.some(l => /^\*?OP\/\d{4}\/\d{7}/.test(l))) return 'OP';
 
-  // 5. Title says OA and no OP headers found → genuine OA
   for (const line of lines.slice(0, 10)) {
     if (/Lista ordini OA in scadenza/i.test(line)) return 'OA';
   }
 
-  // 6. Fallback: check first order header
   for (const line of first50) {
     if (/^OV\//.test(line)) return 'OV';
     if (/^\*?OP\//.test(line)) return 'OP';
@@ -623,32 +723,24 @@ export function detectPdfType(lines, filename) {
     if (/^OA\//.test(line)) return 'OA';
   }
 
-  // 7. Last resort: filename patterns
   if (fname.includes('oa')) return 'OA';
   if (fname.includes('ov') || fname.includes('cliente')) return 'OV';
 
   return null;
 }
 
-/** Classify orders from a mixed g00 file into OA/OP/ACCIAIERIA.
- *  - orderRef starts with "OP/" → OP
- *  - orderRef starts with "OA/" and ALL materials have codiceProdotto starting with "M#T" → ACCIAIERIA
- *  - otherwise → OA
- *  Returns { OA: [...], OP: [...], ACCIAIERIA: [...] } */
+/** Classify orders from a mixed g00 file into OA/OP/ACCIAIERIA. */
 export function classifyMixedOrders(orders) {
   const grouped = { OA: [], OP: [], ACCIAIERIA: [] };
 
   for (const order of orders) {
     if (order.orderRef.startsWith('OP/') || order.orderRef.startsWith('*OP/')) {
-      // Ensure orderRef is clean (without leading *)
       order.orderRef = order.orderRef.replace(/^\*/, '');
       grouped.OP.push(order);
     } else if (
       order.materials.length > 0 &&
       order.materials.every(m => m.codiceProdotto && /^M#T/i.test(m.codiceProdotto))
     ) {
-      // All materials are M#T* → ACCIAIERIA
-      // Rewrite orderRef: OA/2026/... → ACCIAIERIA/2026/...
       order.orderRef = order.orderRef.replace(/^OA\//, 'ACCIAIERIA/');
       grouped.ACCIAIERIA.push(order);
     } else {
@@ -667,7 +759,7 @@ export function parseByType(lines, type) {
     case 'OP': return parseOAOP(lines, 'OP');
     case 'ACCIAIERIA': return parseOAOP(lines, 'ACCIAIERIA');
     case 'OL': return parseOL(lines);
-    case 'MIXED': return parseOAOP(lines); // no forceType — classify later
+    case 'MIXED': return parseOAOP(lines);
     default: throw new Error(`Tipo PDF sconosciuto: ${type}`);
   }
 }
