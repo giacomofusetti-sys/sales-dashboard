@@ -226,9 +226,11 @@ const NEW_CLIENTS_AGENTS = [
   ['TURBINEN-UND KRAFTWERKSANLAGENBAU EFG ENERGIEFORSCHUNGS-UND ENT-WICKLUNGSGESELLSCHAFT  M.B.H. & CO KG.', 'EXPORT SALES'],
   ['A.R.V.F. SRL A SOCIO UNICO', 'PIRAN MATTIA'],
   ['VALMET INC. COMPANY', 'EXPORT SALES'],
+  ['VALMET INC. COMPANY 1641', 'EXPORT SALES'],
   ['INAUEN SCHAETTI AG', 'EXPORT SALES'],
   ['OFFICINE GHIDONI SA', 'EXPORT SALES'],
   ['M.D.M. 2000 SRL', 'PIRAN MATTIA'],
+  ['M.D.M 2000 SRL', 'PIRAN MATTIA'],
   ['TECNOMATIC FLOW ELEMENTS SRL', 'PIRAN MATTIA'],
   ['FVP S.R.L.', 'BANKA AGNIESZKA'],
   ['STIM SRL', 'BANKA AGNIESZKA'],
@@ -236,6 +238,7 @@ const NEW_CLIENTS_AGENTS = [
   ['CARTIERE MODESTO CARDELLA SPA', 'SOCCAL FABIO'],
   ['QUADRIFER SRL', 'DIRETTO'],
   ['ENERGY LAB SRL', 'OLTOLINI MASSIMILIANO'],
+  ['ENERGY LAB SRL.', 'OLTOLINI MASSIMILIANO'],
   ['ZOCCHI FRATELLI SNC DI ZOCCHI RENATO & C.', 'DIRETTO'],
 ];
 
@@ -246,21 +249,27 @@ export async function seedNewClientsAgents() {
     return { ragione: resolved, cap: normalizeClient(resolved), agente };
   });
 
-  // Step 2: update agent for ALL entries (existing budget clients + previously seeded)
-  for (const e of entries) {
-    await supabase
-      .from('budget_customers')
-      .update({ agente: e.agente, updated_at: new Date().toISOString() })
-      .eq('ragione_cap', e.cap);
-  }
-
-  // Step 3: find which entries don't exist in DB yet and insert them as new
+  // Step 2: find which entries already exist in DB
   const allCaps = entries.map(e => e.cap);
   const { data: existing } = await supabase
     .from('budget_customers')
     .select('ragione_cap')
     .in('ragione_cap', allCaps);
   const existingSet = new Set((existing || []).map(r => r.ragione_cap));
+
+  // Log match status for each seed entry
+  for (const e of entries) {
+    const found = existingSet.has(e.cap);
+    console.log(`[seed] ${found ? '✓ FOUND' : '✗ NOT FOUND'} "${e.ragione}" (cap: "${e.cap}") → ${e.agente}`);
+  }
+
+  // Step 3: update agent for ALL entries (existing budget clients + previously seeded)
+  for (const e of entries) {
+    await supabase
+      .from('budget_customers')
+      .update({ agente: e.agente, updated_at: new Date().toISOString() })
+      .eq('ragione_cap', e.cap);
+  }
 
   const newRows = entries
     .filter(e => !existingSet.has(e.cap))
