@@ -23,7 +23,12 @@ export function setAliases(newAliases) {
 
 export function resolveAlias(name) {
   const upper = name?.toString().trim().toUpperCase() || '';
-  return aliases[upper] || name;
+  // Lookup is case-insensitive: try exact key first, then uppercase keys
+  if (aliases[upper]) return aliases[upper];
+  for (const [key, val] of Object.entries(aliases)) {
+    if (key.toUpperCase() === upper) return val;
+  }
+  return name;
 }
 
 export { DEFAULT_ALIASES };

@@ -149,7 +149,7 @@ export function parseSalesFile(arrayBuffer, filename) {
   const ws = wb.Sheets[wb.SheetNames[0]];
   const raw = XLSX.utils.sheet_to_json(ws, { header: 0, defval: null });
 
-  const DEBUG_NAMES = ['GIBERTI', 'LEITECH', 'TERMOMECCANICA', 'TURBINEN'];
+  const DEBUG_NAMES = ['GIBERTI', 'LEITECH', 'TERMOMECCANICA', 'TURBINEN', 'FP 2000'];
   const rows = raw
     .filter(r => r['Cliente'] && r['Cliente'] !== 'Totali')
     .map(r => {
