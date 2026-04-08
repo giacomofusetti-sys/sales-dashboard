@@ -37,9 +37,11 @@ export function parseBudget(arrayBuffer) {
 
   const NUOVI_CLIENTI_AGENTI = {
     'NUOVI CLIENTI BANKA': 'BANKA AGNIESZKA',
+    'NUOVI CLIENTI BRENNA': 'BRENNA ALESSANDRO',
     'NUOVI CLIENTI EXPORT': 'EXPORT SALES',
     'NUOVI CLIENTI OLTOLINI': 'OLTOLINI MASSIMILIANO',
     'NUOVI CLIENTI PIRAN': 'PIRAN MATTIA',
+    'NUOVI CLIENTI SOCCAL': 'SOCCAL FABIO',
   };
 
   // Row 3 (0-based) = headers, data starts row 4
