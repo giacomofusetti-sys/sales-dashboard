@@ -193,7 +193,7 @@ export async function updateCustomerAgent(ragioneCap, agente) {
 }
 
 // ── Seed new clients with agents ─────────────────────────────
-const NEW_CLIENTS_AGENTS = [
+export const NEW_CLIENTS_AGENTS = [
   ['A. STAFFELBACH AG', 'EXPORT SALES'],
   ['AIM SERVICE ITALIA SRL', 'PIRAN MATTIA'],
   ['AKEA SRL', 'OLTOLINI MASSIMILIANO'],

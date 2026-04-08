@@ -7,9 +7,15 @@ import {
   loadFatturatoDB, saveFatturato,
   loadOrdiniApertiDB, saveOrdiniAperti,
   upsertCustomer,
+  NEW_CLIENTS_AGENTS,
 } from '../utils/supabase';
 
 const DataContext = createContext(null);
+
+// Normalize for fuzzy matching: remove dots, collapse spaces, trim, uppercase
+function normalizeForMatch(str) {
+  return (str || '').replace(/\./g, '').replace(/\s+/g, ' ').trim().toUpperCase();
+}
 
 function emptyStore() {
   return { customers: [], acquisito: {}, fatturato: {}, ordiniAperti: null, budgetLoaded: false, lastUpdated: null };
@@ -32,6 +38,22 @@ export function DataProvider({ children }) {
           loadFatturatoDB(),
           loadOrdiniApertiDB(),
         ]);
+
+        // Fuzzy-match seed agents on initial load too
+        if (customers.length > 0) {
+          const normalizedIndex = new Map();
+          customers.forEach((c, idx) => {
+            normalizedIndex.set(normalizeForMatch(c.ragioneCap), idx);
+          });
+          for (const [seedName, agente] of NEW_CLIENTS_AGENTS) {
+            const norm = normalizeForMatch(seedName);
+            const idx = normalizedIndex.get(norm);
+            if (idx !== undefined && !customers[idx].agente) {
+              customers[idx] = { ...customers[idx], agente };
+            }
+          }
+        }
+
         setStore({
           customers,
           acquisito,
@@ -59,8 +81,29 @@ export function DataProvider({ children }) {
       await saveBudgetToDB(merged);
       // Reload from DB to include seeded clients from seedNewClientsAgents()
       const allCustomers = await loadBudgetFromDB();
-      const withAgent = allCustomers.filter(c => c.isNew && c.agente);
-      console.log(`[uploadBudget] loaded ${allCustomers.length} customers, ${withAgent.length} new with agent:`, withAgent.map(c => `${c.ragioneCap} → ${c.agente}`));
+
+      // Fuzzy-match seed agents onto in-memory customers
+      const normalizedIndex = new Map();
+      allCustomers.forEach((c, idx) => {
+        normalizedIndex.set(normalizeForMatch(c.ragioneCap), idx);
+      });
+      let matched = 0;
+      const unmatched = [];
+      for (const [seedName, agente] of NEW_CLIENTS_AGENTS) {
+        const norm = normalizeForMatch(seedName);
+        const idx = normalizedIndex.get(norm);
+        if (idx !== undefined) {
+          allCustomers[idx] = { ...allCustomers[idx], agente };
+          matched++;
+        } else {
+          unmatched.push(seedName);
+        }
+      }
+      if (unmatched.length) {
+        console.warn(`[uploadBudget] seed agents NOT matched (${unmatched.length}):`, unmatched);
+      }
+      console.log(`[uploadBudget] seed agents: ${matched} matched, ${unmatched.length} unmatched, ${allCustomers.length} total customers`);
+
       setStore(prev => ({ ...prev, customers: allCustomers, budgetLoaded: true, lastUpdated: new Date().toISOString() }));
     } catch (e) { setError('Errore budget: ' + e.message); }
     finally { setLoading(false); }
