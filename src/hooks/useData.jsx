@@ -17,6 +17,21 @@ function normalizeForMatch(str) {
   return (str || '').replace(/\./g, '').replace(/\s+/g, ' ').trim().toUpperCase();
 }
 
+// Build set of seed names (normalized) for exclusion
+const seedNormSet = new Set(NEW_CLIENTS_AGENTS.map(([name]) => normalizeForMatch(name)));
+
+function logMissingAgents(customers, label) {
+  const missing = customers.filter(c => {
+    if (c.agente) return false;
+    return !seedNormSet.has(normalizeForMatch(c.ragioneCap));
+  });
+  if (missing.length) {
+    console.warn(`[missing agents] ${label}: ${missing.length} clients without agent:`, missing.map(c => c.ragioneCap));
+  } else {
+    console.log(`[missing agents] ${label}: all clients have agents`);
+  }
+}
+
 function emptyStore() {
   return { customers: [], acquisito: {}, fatturato: {}, ordiniAperti: null, budgetLoaded: false, lastUpdated: null };
 }
@@ -54,6 +69,7 @@ export function DataProvider({ children }) {
           }
         }
 
+        logMissingAgents(customers, 'init');
         setStore({
           customers,
           acquisito,
@@ -103,6 +119,7 @@ export function DataProvider({ children }) {
         console.warn(`[uploadBudget] seed agents NOT matched (${unmatched.length}):`, unmatched);
       }
       console.log(`[uploadBudget] seed agents: ${matched} matched, ${unmatched.length} unmatched, ${allCustomers.length} total customers`);
+      logMissingAgents(allCustomers, 'uploadBudget');
 
       setStore(prev => ({ ...prev, customers: allCustomers, budgetLoaded: true, lastUpdated: new Date().toISOString() }));
     } catch (e) { setError('Errore budget: ' + e.message); }
@@ -118,6 +135,7 @@ export function DataProvider({ children }) {
       const { updatedCustomers, newFound } = await detectAndAddNew(rows, store.customers);
       await saveAcquisito(month, rows);
       setNewClientsLastUpload(newFound);
+      logMissingAgents(updatedCustomers, 'uploadAcquisito');
       setStore(prev => ({ ...prev, customers: updatedCustomers, acquisito: { ...prev.acquisito, [month]: rows }, lastUpdated: new Date().toISOString() }));
     } catch (e) { setError('Errore acquisito: ' + e.message); }
     finally { setLoading(false); }
@@ -132,6 +150,7 @@ export function DataProvider({ children }) {
       const { updatedCustomers, newFound } = await detectAndAddNew(rows, store.customers);
       await saveFatturato(month, rows);
       setNewClientsLastUpload(prev => [...new Set([...prev, ...newFound])]);
+      logMissingAgents(updatedCustomers, 'uploadFatturato');
       setStore(prev => ({ ...prev, customers: updatedCustomers, fatturato: { ...prev.fatturato, [month]: rows }, lastUpdated: new Date().toISOString() }));
     } catch (e) { setError('Errore fatturato: ' + e.message); }
     finally { setLoading(false); }
