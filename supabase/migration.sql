@@ -62,7 +62,7 @@ CREATE TABLE order_materials (
   -- Editable deadline
   scadenza_effettiva DATE,
 
-  UNIQUE(order_id, codice_prodotto, pos)
+  UNIQUE NULLS NOT DISTINCT (order_id, codice_prodotto, pos)
 );
 
 CREATE INDEX idx_order_materials_order ON order_materials(order_id);

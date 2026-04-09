@@ -97,10 +97,10 @@ const OV_SUPPLIER_RE = /^F\s+(\d+)\s+(.*?)\s+(OA|OP|OL)\/(\d{4}\/\d{7})\s+(\d{2}
 const OV_FOOTER_RE = /^Valore Residuo Ordine\s+([\d.,]+)/;
 const OV_PESO_RE = /Peso Totale Ordine\s+([\d.,]+)/;
 
-// In pdfjs output, the OV rest string contains only 3 numbers (giac/imp/ord).
-// Peso comes on a separate line. Search for block of 3.
+// In pdfjs output, the OV rest string contains 3 numbers: impegnato, in_ordine, peso.
+// Giacenza comes on a separate line (next Y position). Search for block of 3.
 function parseOvMaterialFields(rest) {
-  const result = { descrizione: '', consRichiesta: null, giacenza: null, impegnato: null, inOrdine: null };
+  const result = { descrizione: '', consRichiesta: null, impegnato: null, inOrdine: null, peso: null };
   const tokens = rest.split(/\s+/).filter(Boolean);
   if (!tokens.length) return result;
 
@@ -130,12 +130,12 @@ function parseOvMaterialFields(rest) {
     ].join(' ');
   }
 
-  // Assign: giacenza, impegnato, in_ordine (left to right)
+  // Assign: impegnato, in_ordine, peso (left to right)
   const n = block.nums;
   if (n.length >= 3) {
-    result.giacenza = n[0];
-    result.impegnato = n[1];
-    result.inOrdine = n[2];
+    result.impegnato = n[0];
+    result.inOrdine = n[1];
+    result.peso = n[2];
   } else if (n.length === 2) {
     result.impegnato = n[0];
     result.inOrdine = n[1];
@@ -213,10 +213,10 @@ export function parseOV(lines) {
         codiceProdotto: mm[3],
         descrizione: fields.descrizione,
         consRichiesta: fields.consRichiesta || pendingConsRichiesta,
-        giacenza: fields.giacenza,
+        giacenza: null, // giacenza comes on next line in pdfjs
         impegnato: fields.impegnato,
         inOrdine: fields.inOrdine,
-        peso: null, // peso comes on next line in pdfjs
+        peso: fields.peso,
         refs: [],
       };
       pendingConsRichiesta = null;
@@ -239,25 +239,26 @@ export function parseOV(lines) {
       continue;
     }
 
-    // Single pure number after material → peso
-    if (currentMat && currentMat.peso == null && PURE_NUM_RE.test(trimmed)) {
-      currentMat.peso = parseItalianNumber(trimmed);
+    // Single pure number after material → giacenza (separate Y line in pdfjs)
+    if (currentMat && currentMat.giacenza == null && PURE_NUM_RE.test(trimmed)) {
+      currentMat.giacenza = parseItalianNumber(trimmed);
       continue;
     }
 
-    // Continuation line — append to description
+    // Continuation line — append to description (skip DDL/F refs and parenthesized noise)
     if (currentMat && trimmed) {
+      if (/^(?:DDL|BPL|DDT|F\s+\d)/.test(trimmed) || /^\(.*\)$/.test(trimmed)) continue;
       currentMat.descrizione = (currentMat.descrizione + ' ' + trimmed).trim();
     }
   }
 
   if (current) orders.push(current);
 
-  // Deduplicate materials: by codiceProdotto + pos
+  // Deduplicate materials: by codiceProdotto + pos (use scadenza as tiebreaker when pos is null)
   for (const order of orders) {
     const seen = new Map();
     for (const mat of order.materials) {
-      const key = `${mat.codiceProdotto}|${mat.pos || ''}`;
+      const key = `${mat.codiceProdotto}|${mat.pos || mat.scadenza || ''}`;
       if (seen.has(key)) {
         const existing = seen.get(key);
         const scoreOf = (m) => {
