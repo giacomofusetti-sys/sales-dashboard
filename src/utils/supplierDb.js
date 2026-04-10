@@ -416,9 +416,25 @@ export async function importParsedOrders(orderType, parsedOrders, onProgress) {
     }
   }
 
+  // Dedup by DB conflict key (order_id, codice_prodotto, pos) — with NULLS NOT DISTINCT,
+  // two rows with same code + null pos collide. Keep the entry with more data.
+  const scoreEntry = (e) => {
+    const nonNull = Object.values(e.row).filter(v => v != null && v !== '').length;
+    return (e.refs?.length || 0) * 1000 + nonNull;
+  };
+  const dedupedMap = new Map();
+  for (const entry of matEntries) {
+    const key = `${entry.row.order_id}|${entry.row.codice_prodotto}|${entry.row.pos || ''}`;
+    const existing = dedupedMap.get(key);
+    if (!existing || scoreEntry(entry) > scoreEntry(existing)) {
+      dedupedMap.set(key, entry);
+    }
+  }
+  const dedupedEntries = [...dedupedMap.values()];
+
   const matKeyToRefs = new Map(); // "orderId|codice|pos" → refs[]
-  for (let i = 0; i < matEntries.length; i += BATCH_MATERIALS) {
-    const chunk = matEntries.slice(i, i + BATCH_MATERIALS);
+  for (let i = 0; i < dedupedEntries.length; i += BATCH_MATERIALS) {
+    const chunk = dedupedEntries.slice(i, i + BATCH_MATERIALS);
     const rows = chunk.map(e => e.row);
     const { data, error } = await supabase
       .from('order_materials')

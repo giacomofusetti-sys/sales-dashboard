@@ -254,11 +254,11 @@ export function parseOV(lines) {
 
   if (current) orders.push(current);
 
-  // Deduplicate materials: by codiceProdotto + pos (use scadenza as tiebreaker when pos is null)
+  // Deduplicate materials: by codiceProdotto + pos + scadenza (covers pos=null cases)
   for (const order of orders) {
     const seen = new Map();
     for (const mat of order.materials) {
-      const key = `${mat.codiceProdotto}|${mat.pos || mat.scadenza || ''}`;
+      const key = `${mat.codiceProdotto}|${mat.pos || ''}|${mat.scadenza || ''}`;
       if (seen.has(key)) {
         const existing = seen.get(key);
         const scoreOf = (m) => {
