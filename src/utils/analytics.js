@@ -19,29 +19,52 @@ function buildBudgetMap(customers) {
   return Object.fromEntries(customers.map(c => [c.ragioneCap, c]));
 }
 
-// Compute ordini aperti per client with delivery date within 2026
+// Parse delivery date from ordini aperti file. Supports dd/mm/yyyy strings,
+// Excel serial numbers (sheet_to_json raw mode), Date objects, ISO strings.
+// Returns a Date or null if unparseable.
+function parseDeliveryDate(val) {
+  if (val == null || val === '') return null;
+  if (val instanceof Date) return isNaN(val) ? null : val;
+
+  const s = val.toString().trim();
+  if (!s) return null;
+
+  const m = s.match(/^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{2,4})$/);
+  if (m) {
+    const d = parseInt(m[1]);
+    const mo = parseInt(m[2]) - 1;
+    let y = parseInt(m[3]);
+    if (y < 100) y += 2000;
+    const dt = new Date(y, mo, d);
+    return isNaN(dt) ? null : dt;
+  }
+
+  // Excel serial number (days since 1899-12-30)
+  if (/^\d+(\.\d+)?$/.test(s)) {
+    const serial = parseFloat(s);
+    const dt = new Date(Math.round((serial - 25569) * 86400 * 1000));
+    return isNaN(dt) ? null : dt;
+  }
+
+  const dt = new Date(s);
+  return isNaN(dt) ? null : dt;
+}
+
+const END_OF_2026 = new Date(2026, 11, 31, 23, 59, 59);
+
+// Compute ordini aperti per client with delivery date <= 31/12/2026.
+// If no ordini aperti loaded, returns empty map (→ previsioneAnno = fatturato YTD).
 function computeOrdiniByClient(store) {
-  if (!store.ordiniAperti?.rows) return {};
+  if (!store.ordiniAperti?.rows?.length) return {};
   const map = {};
   store.ordiniAperti.rows.forEach(r => {
-    if (isDateWithinYear(r.dataConsegna, 2026)) {
-      map[r.clienteCap] = (map[r.clienteCap] || 0) + r.valoreAperti;
+    const dt = parseDeliveryDate(r.dataConsegna);
+    // Include rows with missing/unparseable dates (already open, no ETA)
+    if (dt === null || dt <= END_OF_2026) {
+      map[r.clienteCap] = (map[r.clienteCap] || 0) + (r.valoreAperti || 0);
     }
   });
   return map;
-}
-
-function isDateWithinYear(dateStr, year) {
-  if (!dateStr) return true;
-  // Try dd/mm/yyyy
-  const parts = dateStr.split('/');
-  if (parts.length === 3) {
-    const y = parseInt(parts[2]);
-    return !isNaN(y) && y <= year;
-  }
-  const d = new Date(dateStr);
-  if (!isNaN(d)) return d.getFullYear() <= year;
-  return true;
 }
 
 function pct(value, budget) {
@@ -142,6 +165,22 @@ export function computeYTDRows(store, upToMonth) {
   const customersWithBdg = store.customers.filter(c => c.budgetVenditoriMesi.some(v => v > 0));
   const zeroedSeeded = store.customers.filter(c => c.isNew && c.budgetVenditoriMesi.every(v => v === 0));
   console.log(`[computeYTDRows] ${store.customers.length} customers, ${customersWithBdg.length} with budget, ${zeroedSeeded.length} seeded (zero budget), YTD bdg vend (m0..${upToMonth}): ${debugBdgVendTotal.toFixed(2)}`);
+
+  // Debug: show previsioneAnno breakdown for first 5 clients with ordini aperti
+  const ordiniLoaded = !!store.ordiniAperti?.rows?.length;
+  if (ordiniLoaded) {
+    const logged = [];
+    for (const r of Object.values(ytd)) {
+      const oa = ordiniMap[r.cap] || 0;
+      if (oa > 0) {
+        logged.push({ cliente: r.label, fattYTD: r.fatturato, ordiniAperti: oa, previsioneAnno: r.fatturato + oa });
+        if (logged.length >= 5) break;
+      }
+    }
+    console.log('[computeYTDRows] previsioneAnno preview (first 5 with ordini aperti):', logged);
+  } else {
+    console.log('[computeYTDRows] ordini aperti non caricati → previsioneAnno = fatturato YTD');
+  }
 
   return Object.values(ytd).map(r => {
     const budget = budgetMap[r.cap];
