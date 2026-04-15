@@ -47,8 +47,8 @@ export async function saveBudgetToDB(customers) {
     if (error) throw error;
   }
 
-  // Seed new clients with their agents after budget upload
-  await seedNewClientsAgents();
+  // Ensure the seed agent overrides exist in the persistent table
+  await saveAgentOverrides();
 }
 
 export async function upsertCustomer(customer) {
@@ -244,56 +244,42 @@ export const NEW_CLIENTS_AGENTS = [
   ['NUOVI CLIENTI SOCCAL', 'SOCCAL FABIO'],
 ];
 
-export async function seedNewClientsAgents() {
-  // Step 1: resolve all seed entries to their target ragione_cap
-  const entries = NEW_CLIENTS_AGENTS.map(([ragione, agente]) => {
+// ── Agent overrides (persistent, survive budget reset) ──────
+// These are client→agente mappings stored separately from budget_customers
+// so they are never lost when the budget is wiped and re-uploaded.
+export async function saveAgentOverrides() {
+  // Dedupe by resolved ragione_cap
+  const unique = new Map();
+  for (const [ragione, agente] of NEW_CLIENTS_AGENTS) {
     const resolved = resolveAlias(ragione);
-    return { ragione: resolved, cap: normalizeClient(resolved), agente };
-  });
-
-  // Step 2: find which entries already exist in DB
-  const allCaps = entries.map(e => e.cap);
-  const { data: existing } = await supabase
-    .from('budget_customers')
-    .select('ragione_cap')
-    .in('ragione_cap', allCaps);
-  const existingSet = new Set((existing || []).map(r => r.ragione_cap));
-
-  // Log match status for each seed entry
-  for (const e of entries) {
-    const found = existingSet.has(e.cap);
-    console.log(`[seed] ${found ? '✓ FOUND' : '✗ NOT FOUND'} "${e.ragione}" (cap: "${e.cap}") → ${e.agente}`);
+    const cap = normalizeClient(resolved);
+    unique.set(cap, { ragione_cap: cap, ragione: resolved, agente });
   }
+  const rows = [...unique.values()];
 
-  // Step 3: update agent for ALL entries (existing budget clients + previously seeded)
-  for (const e of entries) {
-    await supabase
-      .from('budget_customers')
-      .update({ agente: e.agente, updated_at: new Date().toISOString() })
-      .eq('ragione_cap', e.cap);
+  const { error } = await supabase
+    .from('agent_overrides')
+    .upsert(rows, { onConflict: 'ragione_cap' });
+  if (error) {
+    console.error('[saveAgentOverrides] error (is the agent_overrides table created?):', error.message);
+    return;
   }
+  console.log(`[saveAgentOverrides] upserted ${rows.length} overrides`);
+}
 
-  const newRows = entries
-    .filter(e => !existingSet.has(e.cap))
-    .map(e => ({
-      ragione: e.ragione,
-      ragione_cap: e.cap,
-      codice: '',
-      agente: e.agente,
-      budget_venditori_mesi: Array(12).fill(0),
-      budget_interno_mesi: Array(12).fill(0),
-      budget_venditori_annuale: 0,
-      budget_interno_annuale: 0,
-      is_new: true,
-      updated_at: new Date().toISOString(),
-    }));
-
-  if (newRows.length) {
-    const { error } = await supabase.from('budget_customers').insert(newRows);
-    if (error) throw error;
+export async function loadAgentOverrides() {
+  const { data, error } = await supabase
+    .from('agent_overrides')
+    .select('ragione_cap, ragione, agente');
+  if (error) {
+    console.error('[loadAgentOverrides] error (is the agent_overrides table created?):', error.message);
+    return [];
   }
-
-  console.log(`[seed] done: ${entries.length} agents updated, ${newRows.length} new clients inserted, ${entries.length - newRows.length} already existed`);
+  return (data || []).map(r => ({
+    ragioneCap: r.ragione_cap,
+    ragione: r.ragione,
+    agente: r.agente,
+  }));
 }
 
 // ── Client aliases ───────────────────────────────────────────

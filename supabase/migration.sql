@@ -106,3 +106,14 @@ CREATE POLICY "Allow all on supplier_orders" ON supplier_orders FOR ALL USING (t
 CREATE POLICY "Allow all on order_materials" ON order_materials FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all on order_notes" ON order_notes FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all on material_refs" ON material_refs FOR ALL USING (true) WITH CHECK (true);
+
+-- 6. Persistent agent overrides (survive budget resets)
+CREATE TABLE IF NOT EXISTS agent_overrides (
+  ragione_cap text PRIMARY KEY,
+  ragione text,
+  agente text,
+  created_at timestamptz DEFAULT now()
+);
+
+ALTER TABLE agent_overrides ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow all on agent_overrides" ON agent_overrides FOR ALL USING (true) WITH CHECK (true);

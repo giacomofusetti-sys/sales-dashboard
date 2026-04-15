@@ -7,7 +7,7 @@ import {
   loadFatturatoDB, saveFatturato,
   loadOrdiniApertiDB, saveOrdiniAperti,
   upsertCustomer,
-  NEW_CLIENTS_AGENTS,
+  loadAgentOverrides,
 } from '../utils/supabase';
 
 const DataContext = createContext(null);
@@ -17,13 +17,40 @@ function normalizeForMatch(str) {
   return (str || '').replace(/\./g, '').replace(/\s+/g, ' ').trim().toUpperCase();
 }
 
-// Build set of seed names (normalized) for exclusion
-const seedNormSet = new Set(NEW_CLIENTS_AGENTS.map(([name]) => normalizeForMatch(name)));
+// Apply persistent agent_overrides onto a customers array.
+// Exact ragione_cap match first, fuzzy fallback (punctuation/whitespace insensitive).
+// Overrides have absolute precedence over whatever agente came from budget_customers.
+function applyAgentOverrides(customers, overrides) {
+  if (!overrides?.length) return customers;
+  const capIndex = new Map();
+  const fuzzyIndex = new Map();
+  customers.forEach((c, idx) => {
+    capIndex.set(c.ragioneCap, idx);
+    fuzzyIndex.set(normalizeForMatch(c.ragioneCap), idx);
+  });
+  const result = [...customers];
+  const unmatched = [];
+  let applied = 0;
+  for (const ov of overrides) {
+    let idx = capIndex.get(ov.ragioneCap);
+    if (idx === undefined) idx = fuzzyIndex.get(normalizeForMatch(ov.ragioneCap));
+    if (idx !== undefined) {
+      result[idx] = { ...result[idx], agente: ov.agente };
+      applied++;
+    } else {
+      unmatched.push(ov.ragioneCap);
+    }
+  }
+  console.log(`[applyAgentOverrides] ${applied} applied, ${unmatched.length} unmatched (${overrides.length} total)`);
+  if (unmatched.length) console.log('[applyAgentOverrides] unmatched overrides:', unmatched);
+  return result;
+}
 
-function logMissingAgents(customers, label) {
+function logMissingAgents(customers, label, overrides) {
+  const overrideCaps = new Set((overrides || []).map(o => normalizeForMatch(o.ragioneCap)));
   const missing = customers.filter(c => {
     if (c.agente) return false;
-    return !seedNormSet.has(normalizeForMatch(c.ragioneCap));
+    return !overrideCaps.has(normalizeForMatch(c.ragioneCap));
   });
   if (missing.length) {
     console.warn(`[missing agents] ${label}: ${missing.length} clients without agent:`, missing.map(c => c.ragioneCap));
@@ -47,29 +74,16 @@ export function DataProvider({ children }) {
     async function init() {
       setLoading(true);
       try {
-        const [customers, acquisito, fatturato, ordiniAperti] = await Promise.all([
+        const [rawCustomers, acquisito, fatturato, ordiniAperti, overrides] = await Promise.all([
           loadBudgetFromDB(),
           loadAcquisitoDB(),
           loadFatturatoDB(),
           loadOrdiniApertiDB(),
+          loadAgentOverrides(),
         ]);
 
-        // Fuzzy-match seed agents on initial load too
-        if (customers.length > 0) {
-          const normalizedIndex = new Map();
-          customers.forEach((c, idx) => {
-            normalizedIndex.set(normalizeForMatch(c.ragioneCap), idx);
-          });
-          for (const [seedName, agente] of NEW_CLIENTS_AGENTS) {
-            const norm = normalizeForMatch(seedName);
-            const idx = normalizedIndex.get(norm);
-            if (idx !== undefined && !customers[idx].agente) {
-              customers[idx] = { ...customers[idx], agente };
-            }
-          }
-        }
-
-        logMissingAgents(customers, 'init');
+        const customers = applyAgentOverrides(rawCustomers, overrides);
+        logMissingAgents(customers, 'init', overrides);
         setStore({
           customers,
           acquisito,
@@ -94,32 +108,16 @@ export function DataProvider({ children }) {
       const customers = parseBudget(buf);
       const existingMap = Object.fromEntries(store.customers.map(c => [c.ragioneCap, c]));
       const merged = customers.map(c => ({ ...c, isNew: existingMap[c.ragioneCap]?.isNew || false }));
+      // saveBudgetToDB also upserts the persistent agent_overrides (seed)
       await saveBudgetToDB(merged);
-      // Reload from DB to include seeded clients from seedNewClientsAgents()
-      const allCustomers = await loadBudgetFromDB();
 
-      // Fuzzy-match seed agents onto in-memory customers
-      const normalizedIndex = new Map();
-      allCustomers.forEach((c, idx) => {
-        normalizedIndex.set(normalizeForMatch(c.ragioneCap), idx);
-      });
-      let matched = 0;
-      const unmatched = [];
-      for (const [seedName, agente] of NEW_CLIENTS_AGENTS) {
-        const norm = normalizeForMatch(seedName);
-        const idx = normalizedIndex.get(norm);
-        if (idx !== undefined) {
-          allCustomers[idx] = { ...allCustomers[idx], agente };
-          matched++;
-        } else {
-          unmatched.push(seedName);
-        }
-      }
-      if (unmatched.length) {
-        console.warn(`[uploadBudget] seed agents NOT matched (${unmatched.length}):`, unmatched);
-      }
-      console.log(`[uploadBudget] seed agents: ${matched} matched, ${unmatched.length} unmatched, ${allCustomers.length} total customers`);
-      logMissingAgents(allCustomers, 'uploadBudget');
+      // Reload customers + overrides, then apply overrides on top
+      const [rawCustomers, overrides] = await Promise.all([
+        loadBudgetFromDB(),
+        loadAgentOverrides(),
+      ]);
+      const allCustomers = applyAgentOverrides(rawCustomers, overrides);
+      logMissingAgents(allCustomers, 'uploadBudget', overrides);
 
       setStore(prev => ({ ...prev, customers: allCustomers, budgetLoaded: true, lastUpdated: new Date().toISOString() }));
     } catch (e) { setError('Errore budget: ' + e.message); }
