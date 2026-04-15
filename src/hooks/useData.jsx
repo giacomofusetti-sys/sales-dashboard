@@ -133,8 +133,11 @@ export function DataProvider({ children }) {
       const { updatedCustomers, newFound } = await detectAndAddNew(rows, store.customers);
       await saveAcquisito(month, rows);
       setNewClientsLastUpload(newFound);
-      logMissingAgents(updatedCustomers, 'uploadAcquisito');
-      setStore(prev => ({ ...prev, customers: updatedCustomers, acquisito: { ...prev.acquisito, [month]: rows }, lastUpdated: new Date().toISOString() }));
+      // Re-apply persistent agent overrides onto any newly-added clients
+      const overrides = await loadAgentOverrides();
+      const withOverrides = applyAgentOverrides(updatedCustomers, overrides);
+      logMissingAgents(withOverrides, 'uploadAcquisito', overrides);
+      setStore(prev => ({ ...prev, customers: withOverrides, acquisito: { ...prev.acquisito, [month]: rows }, lastUpdated: new Date().toISOString() }));
     } catch (e) { setError('Errore acquisito: ' + e.message); }
     finally { setLoading(false); }
   }, [store.customers]);
@@ -148,8 +151,11 @@ export function DataProvider({ children }) {
       const { updatedCustomers, newFound } = await detectAndAddNew(rows, store.customers);
       await saveFatturato(month, rows);
       setNewClientsLastUpload(prev => [...new Set([...prev, ...newFound])]);
-      logMissingAgents(updatedCustomers, 'uploadFatturato');
-      setStore(prev => ({ ...prev, customers: updatedCustomers, fatturato: { ...prev.fatturato, [month]: rows }, lastUpdated: new Date().toISOString() }));
+      // Re-apply persistent agent overrides onto any newly-added clients
+      const overrides = await loadAgentOverrides();
+      const withOverrides = applyAgentOverrides(updatedCustomers, overrides);
+      logMissingAgents(withOverrides, 'uploadFatturato', overrides);
+      setStore(prev => ({ ...prev, customers: withOverrides, fatturato: { ...prev.fatturato, [month]: rows }, lastUpdated: new Date().toISOString() }));
     } catch (e) { setError('Errore fatturato: ' + e.message); }
     finally { setLoading(false); }
   }, [store.customers]);
