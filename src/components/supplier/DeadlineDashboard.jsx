@@ -51,6 +51,7 @@ export default function DeadlineDashboard({ onNavigateToOrder }) {
   const [rows, setRows] = useState([]);
   const [loadingRows, setLoadingRows] = useState(false);
   const [groupBySupplier, setGroupBySupplier] = useState(true);
+  const [groupSort, setGroupSort] = useState('count'); // 'count' | 'alpha'
   const [searchText, setSearchText] = useState('');
   const [activeDocTypes, setActiveDocTypes] = useState(new Set());
   const [roleFilter, setRoleFilter] = useState(null); // null | 'clienti' | 'fornitori'
@@ -143,10 +144,15 @@ export default function DeadlineDashboard({ onNavigateToOrder }) {
       map[name].items.push(d);
       if (info.order_type) map[name].types.add(info.order_type);
     }
-    return Object.entries(map)
-      .map(([name, g]) => ({ name, items: g.items, types: [...g.types] }))
-      .sort((a, b) => b.items.length - a.items.length);
-  }, [filteredRows, groupBySupplier]);
+    const entries = Object.entries(map)
+      .map(([name, g]) => ({ name, items: g.items, types: [...g.types] }));
+    if (groupSort === 'alpha') {
+      entries.sort((a, b) => a.name.localeCompare(b.name, 'it'));
+    } else {
+      entries.sort((a, b) => b.items.length - a.items.length);
+    }
+    return entries;
+  }, [filteredRows, groupBySupplier, groupSort]);
 
   if (loading) {
     return <div style={{ padding: '3rem 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>Caricamento scadenze...</div>;
@@ -224,14 +230,41 @@ export default function DeadlineDashboard({ onNavigateToOrder }) {
       </div>
 
       {/* View toggle */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, gap: 10, flexWrap: 'wrap' }}>
         <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>
           {loadingRows ? 'Caricamento...' : `${filteredRows.length} materiali`}{filteredRows.length !== rows.length && ` (filtrati da ${rows.length})`}
         </div>
-        <button onClick={() => setGroupBySupplier(p => !p)}
-          style={{ fontSize: 11, padding: '4px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', background: groupBySupplier ? 'var(--bg-subtle)' : 'var(--bg-card)', color: 'var(--text-secondary)', cursor: 'pointer' }}>
-          {groupBySupplier ? 'Per fornitore' : 'Lista'}
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {groupBySupplier && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <span style={{ fontSize: 10, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Ordina</span>
+              <div style={{ display: 'flex', borderRadius: 'var(--radius-sm)', overflow: 'hidden', border: '1px solid var(--border)' }}>
+                {[
+                  { key: 'count', label: 'Per quantità' },
+                  { key: 'alpha', label: 'A-Z' },
+                ].map(o => {
+                  const active = groupSort === o.key;
+                  return (
+                    <button key={o.key} onClick={() => setGroupSort(o.key)}
+                      style={{
+                        fontFamily: 'var(--font-serif)',
+                        fontSize: 11, fontWeight: 600, padding: '4px 10px', border: 'none',
+                        background: active ? 'var(--accent)' : 'var(--bg-card)',
+                        color: active ? '#fff' : 'var(--text-secondary)',
+                        cursor: 'pointer', transition: 'all 0.15s',
+                      }}>
+                      {o.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          <button onClick={() => setGroupBySupplier(p => !p)}
+            style={{ fontSize: 11, padding: '4px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', background: groupBySupplier ? 'var(--bg-subtle)' : 'var(--bg-card)', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+            {groupBySupplier ? 'Per fornitore' : 'Lista'}
+          </button>
+        </div>
       </div>
 
       {filteredRows.length === 0 && !loadingRows && (
