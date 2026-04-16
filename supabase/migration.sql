@@ -122,3 +122,7 @@ CREATE POLICY "Allow all on agent_overrides" ON agent_overrides FOR ALL USING (t
 ALTER TABLE order_materials ADD COLUMN IF NOT EXISTS rif_pos_cliente TEXT;
 ALTER TABLE supplier_orders ADD COLUMN IF NOT EXISTS porto TEXT;
 ALTER TABLE supplier_orders ADD COLUMN IF NOT EXISTS destinazione TEXT;
+
+-- 8. Client-side order date (distinct from Comvitea's order_date); appears
+-- before "DEST." in the OV header.
+ALTER TABLE supplier_orders ADD COLUMN IF NOT EXISTS client_order_date DATE;

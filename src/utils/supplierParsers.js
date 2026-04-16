@@ -93,6 +93,9 @@ const OV_CLIENT_RE = /C\s+(\d+)\s+(.+?)(?:\s{2,}|\s+\d{2}\/\d{2}\/\d{2})/;
 const OV_CLIENT_REF_RE = /(?:Vs\.?\s*Rif\.?|Rif\.?\s*Cliente|N\.?\s*Ord\.?\s*Cl\.?|Rif\.?)\s*:?\s*(\S+.*?)$/i;
 const OV_PORTO_RE = /Porto\s+(Franco|Assegnato)/i;
 const OV_DEST_RE = /DEST\.\s+(.+?)(?:\s+Porto\s+(?:Franco|Assegnato)|\s*$)/i;
+// Date that appears right before "DEST." — this is the client's own order
+// date (distinct from Comvitea's order_date at the start of the header).
+const OV_CLIENT_ORDER_DATE_RE = /(\d{2}\/\d{2}\/\d{2})\s+DEST\./i;
 const OV_DATE_RE = /(\d{2}\/\d{2}\/\d{2})/;
 const OV_MATERIAL_RE = /^(?:(\d+)\s+)?(\d{2}\/\d{2}\/\d{2})\s+([A-Z0-9]{1,5}#[A-Z0-9]+)\s+(.*)/;
 const OV_RIFPOS_CONS_RE = /^(\d+)\s+(\d{2}\/\d{2}\/\d{2})$/;
@@ -193,6 +196,9 @@ export function parseOV(lines) {
 
       const destMatch = rest.match(OV_DEST_RE);
       if (destMatch) current.destinazione = destMatch[1].trim();
+
+      const clientDateMatch = rest.match(OV_CLIENT_ORDER_DATE_RE);
+      if (clientDateMatch) current.clientOrderDate = parseDateDDMMYY(clientDateMatch[1]);
 
       const crm = rest.match(OV_CLIENT_REF_RE);
       if (crm) current.clientRef = crm[1].trim();
@@ -523,21 +529,24 @@ const OL_TRATTAMENTO_PATTERNS = [
 ];
 
 /** Parse the rest of an OL Pos. line from right to left.
- *  Format: DESC QTY KG TRATTAMENTO [BOLLA_NUM BOLLA_DATE] [CASSONE_NUM SCAD2] [STATUS]
+ *  Format: DESC QTY KG TRATTAMENTO [BOLLA_NUM BOLLA_DATE] [STATUS]
  *
  *  Extraction order:
  *  1. Status (Trasferimento...) from end
- *  2. Tail (date, number) pairs from end — up to 2
- *     - 2 pairs: first=bolla, second=cassone
- *     - 1 pair with status: cassone; without status: bolla
- *     - number without date: cassone
- *  3. Trattamento (known patterns)
- *  4. KG, QTY (rightmost consecutive pure nums)
- *  5. Rest = description */
+ *  2. Tail (num, date) pairs from end — up to 2
+ *  3. Trattamento (known patterns) from the end of what remains
+ *  4. Decide bolla: a tail pair becomes the bolla ONLY if a trattamento
+ *     was found (i.e. the material went to a terzista). Without a
+ *     trattamento, any tail pair is discarded — it's not a bolla.
+ *  5. KG, QTY from the last 1–2 pure-number tokens
+ *  6. Rest = description
+ *
+ *  Cassone is NEVER extracted here — it lives on the material line that
+ *  precedes the Pos. line and is injected by parseOL. */
 function parseOlPosFields(rest) {
   const result = {
     descrizione: '', qtyInviata: null, kg: null,
-    trattamento: null, bolla: null, cassone: null, status: null,
+    trattamento: null, bolla: null, status: null,
   };
 
   let remaining = rest;
@@ -549,7 +558,7 @@ function parseOlPosFields(rest) {
     remaining = remaining.slice(0, -statusMatch[0].length).trim();
   }
 
-  // 2. Extract tail (date, number) pairs from right — up to 2
+  // 2. Extract tail (num, date) pairs from right — up to 2
   const tailPairs = []; // { num, date } — date may be null
   for (let attempt = 0; attempt < 2; attempt++) {
     let date = null;
@@ -568,45 +577,8 @@ function parseOlPosFields(rest) {
     }
   }
 
-  if (tailPairs.length === 2) {
-    // 2 pairs: first = bolla (num+date), second = cassone
-    const bolla = tailPairs[0];
-    const cass = tailPairs[1];
-    if (bolla.date) result.bolla = `DDL.${bolla.num}.${bolla.date}`;
-    result.cassone = cass.num;
-  } else if (tailPairs.length === 1) {
-    const pair = tailPairs[0];
-    const numVal = parseInt(pair.num, 10);
-    if (result.status) {
-      // With status → always cassone
-      result.cassone = pair.num;
-    } else if (pair.date && numVal >= 1000) {
-      // No status, large number (>=1000) with date → bolla (DDL document number)
-      result.bolla = `DDL.${pair.num}.${pair.date}`;
-    } else {
-      // No status, small number or no date → cassone
-      result.cassone = pair.num;
-    }
-  }
-
-  // Fallback: explicit bolla pattern anywhere
-  if (!result.bolla) {
-    const bollaExplicit = remaining.match(/((?:DDL|BPL|DDT)[.\s]\d+[.\s]\d{2}\/\d{2}\/\d{2})/i);
-    if (bollaExplicit) {
-      result.bolla = bollaExplicit[1].trim();
-      remaining = remaining.replace(bollaExplicit[0], ' ').trim();
-    }
-  }
-  // Fallback: explicit cassone
-  if (!result.cassone) {
-    const cassExplicit = remaining.match(/(?:Cass(?:one)?\.?\s*)(\d+)/i);
-    if (cassExplicit) {
-      result.cassone = cassExplicit[1];
-      remaining = remaining.replace(cassExplicit[0], ' ').trim();
-    }
-  }
-
-  // 3. Extract trattamento
+  // 3. Extract trattamento (before deciding bolla — the presence of a
+  //    trattamento is what tells us the tail pair is a delivery note)
   for (const pat of OL_TRATTAMENTO_PATTERNS) {
     const tm = remaining.match(pat);
     if (tm) {
@@ -616,7 +588,22 @@ function parseOlPosFields(rest) {
     }
   }
 
-  // 4. QTY and KG: exactly the last 2 (or 1) pure-number tokens
+  // 4. Bolla only when there's a trattamento (material went to terzista)
+  if (result.trattamento && tailPairs.length > 0) {
+    const bp = tailPairs[0]; // leftmost tail pair wins
+    if (bp.date) result.bolla = `DDL.${bp.num}.${bp.date}`;
+  }
+
+  // Fallback: explicit bolla pattern embedded in the line
+  if (!result.bolla) {
+    const bollaExplicit = remaining.match(/((?:DDL|BPL|DDT)[.\s]\d+[.\s]\d{2}\/\d{2}\/\d{2})/i);
+    if (bollaExplicit) {
+      result.bolla = bollaExplicit[1].trim();
+      remaining = remaining.replace(bollaExplicit[0], ' ').trim();
+    }
+  }
+
+  // 5. QTY and KG: exactly the last 2 (or 1) pure-number tokens
   // Don't walk further — numbers deeper in the string are part of description (e.g. "DIN 938")
   const tokens = remaining.split(/\s+/).filter(Boolean);
   const len = tokens.length;
@@ -659,6 +646,9 @@ export function parseOL(lines) {
   let currentMat = null;
   let pendingRef = null;
   let pendingSupplier = null;
+  // Cassone lives on the material line that precedes the Pos. line
+  // (last trailing pure-number token when there are ≥ 2 trailing numbers).
+  let pendingCassone = null;
 
   for (const line of lines) {
     const trimmed = line.trim();
@@ -670,6 +660,7 @@ export function parseOL(lines) {
     if (hm) {
       pendingRef = null;
       pendingSupplier = null;
+      pendingCassone = null;
       if (current) orders.push(current);
       current = buildOlOrder(hm[1], hm[2], hm[3], hm[4]);
       currentMat = null;
@@ -685,6 +676,7 @@ export function parseOL(lines) {
         currentMat = null;
         pendingSupplier = null;
         pendingRef = null;
+        pendingCassone = null;
       } else {
         pendingRef = rm[1];
       }
@@ -700,6 +692,7 @@ export function parseOL(lines) {
         currentMat = null;
         pendingRef = null;
         pendingSupplier = null;
+        pendingCassone = null;
       } else {
         pendingSupplier = { date: sm[1], code: sm[2], rest: sm[3] };
       }
@@ -724,7 +717,7 @@ export function parseOL(lines) {
         kg: fields.kg,
         trattamento: fields.trattamento,
         bolla: fields.bolla,
-        cassone: fields.cassone,
+        cassone: pendingCassone,
         status: fields.status,
         refs: [],
       };
@@ -732,9 +725,18 @@ export function parseOL(lines) {
       continue;
     }
 
-    // Material line before positions — skip
+    // Material line that precedes the Pos. line. Its trailing numbers are
+    // "qty_inviata cassone" (2 nums) or just "qty_inviata" (1 num, no cassone).
     const matLine = trimmed.match(OL_MATERIAL_RE);
     if (matLine && !currentMat) {
+      const tokens = matLine[2].split(/\s+/).filter(Boolean);
+      let trailing = 0;
+      for (let i = tokens.length - 1; i >= 0 && PURE_NUM_RE.test(tokens[i]); i--) {
+        trailing++;
+      }
+      pendingCassone = (trailing >= 2)
+        ? String(Math.round(parseItalianNumber(tokens[tokens.length - 1])))
+        : null;
       currentMat = { _skip: true, refs: [] };
       continue;
     }

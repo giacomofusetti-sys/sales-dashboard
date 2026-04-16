@@ -27,6 +27,7 @@ export default function OrderList({ orderType, highlightOrder }) {
   const [expandedOrder, setExpandedOrder] = useState(null);
   const [editingNote, setEditingNote] = useState(null);  // { orderRef, codiceProdotto, text, id }
   const [editingDate, setEditingDate] = useState(null);   // { materialId, date }
+  const [bulkDeadline, setBulkDeadline] = useState(null); // { orderId, date }
   const [sortBy, setSortBy] = useState('order_ref');
   const [sortDir, setSortDir] = useState('asc');
   const highlightRef = useRef(null);
@@ -104,6 +105,16 @@ export default function OrderList({ orderType, highlightOrder }) {
     setEditingDate(null);
   };
 
+  const handleSaveBulkDeadline = async () => {
+    if (!bulkDeadline) return;
+    const mats = materials[bulkDeadline.orderId] || [];
+    const date = bulkDeadline.date || null;
+    for (const m of mats) {
+      await updateDeadline(m.id, date);
+    }
+    setBulkDeadline(null);
+  };
+
   return (
     <div>
       {/* Search + Sort */}
@@ -179,17 +190,26 @@ export default function OrderList({ orderType, highlightOrder }) {
                   cursor: 'pointer', textAlign: 'left',
                 }}
               >
-                <span style={{ fontFamily: 'var(--font-serif)', fontWeight: 700, fontSize: 14, color: 'var(--text-primary)', minWidth: 160 }}>
-                  {order.order_ref}
-                  {order.client_ref && (
-                    <span style={{ fontWeight: 400, fontSize: 11, color: 'var(--text-tertiary)', marginLeft: 6 }}>
-                      Rif. {order.client_ref}
+                <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 6, minWidth: 170 }}>
+                  <span style={{ fontFamily: 'var(--font-serif)', fontWeight: 700, fontSize: 14, color: 'var(--text-primary)' }}>
+                    {order.order_ref}
+                  </span>
+                  {order.order_date && (
+                    <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
+                      {new Date(order.order_date).toLocaleDateString('it-IT')}
                     </span>
                   )}
                 </span>
-                {order.order_date && (
-                  <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>
-                    {new Date(order.order_date).toLocaleDateString('it-IT')}
+                {order.client_ref && (
+                  <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 6 }}>
+                    <span style={{ fontFamily: 'var(--font-serif)', fontWeight: 700, fontSize: 15, color: 'var(--accent)' }}>
+                      {order.client_ref}
+                    </span>
+                    {order.client_order_date && (
+                      <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
+                        {new Date(order.client_order_date).toLocaleDateString('it-IT')}
+                      </span>
+                    )}
                   </span>
                 )}
                 <span style={{ fontSize: 13, color: 'var(--text-secondary)', flex: 1 }}>
@@ -240,6 +260,40 @@ export default function OrderList({ orderType, highlightOrder }) {
                     onEdit={(n) => setEditingNote({ orderRef: order.order_ref, codiceProdotto: null, text: n.note_text, id: n.id })}
                     onDelete={deleteNote}
                   />
+
+                  {/* Bulk scad. effettiva */}
+                  <div style={{ marginBottom: 8, fontSize: 11 }}>
+                    {bulkDeadline?.orderId === order.id ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ color: 'var(--text-tertiary)' }}>Scad. effettiva per tutti i materiali:</span>
+                        <input
+                          type="date"
+                          value={bulkDeadline.date || ''}
+                          onChange={e => setBulkDeadline({ ...bulkDeadline, date: e.target.value })}
+                          style={{ fontSize: 12, padding: '3px 6px', border: '1px solid var(--border)', borderRadius: 4 }}
+                        />
+                        <button onClick={handleSaveBulkDeadline} style={{ ...smallBtn, fontWeight: 600, color: 'var(--accent)' }}>Applica</button>
+                        <button
+                          onClick={async () => {
+                            setBulkDeadline({ ...bulkDeadline, date: '' });
+                            const mats2 = materials[order.id] || [];
+                            for (const m of mats2) await updateDeadline(m.id, null);
+                            setBulkDeadline(null);
+                          }}
+                          style={{ ...smallBtn, color: 'var(--text-tertiary)' }}
+                          title="Rimuovi scadenza effettiva da tutti i materiali"
+                        >Svuota tutti</button>
+                        <button onClick={() => setBulkDeadline(null)} style={{ ...smallBtn, color: 'var(--text-tertiary)' }}>Annulla</button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => setBulkDeadline({ orderId: order.id, date: '' })}
+                        style={{ ...smallBtn, fontSize: 11, color: 'var(--text-tertiary)' }}
+                      >
+                        📅 Imposta scad. effettiva per tutto l'ordine
+                      </button>
+                    )}
+                  </div>
 
                   {/* Materials table */}
                   {mats.length > 0 && (
@@ -321,15 +375,23 @@ export default function OrderList({ orderType, highlightOrder }) {
                                   return <><td style={{ ...tdStyle, fontFamily: 'var(--font-serif)' }}>{fmtNum(mat.giacenza)}</td><td style={{ ...tdStyle, fontFamily: 'var(--font-serif)' }}>{fmtNum(mat.impegnato)}</td><td style={{ ...tdStyle, fontFamily: 'var(--font-serif)', fontWeight: disp !== null && disp < 0 ? 700 : 400, color: disp !== null && disp < 0 ? 'var(--red)' : 'var(--text-primary)' }} title={qtyInArrivo > 0 ? `giac ${fmtNum(mat.giacenza)} − imp ${fmtNum(mat.impegnato)} − ord ${fmtNum(mat.in_ordine)} + arrivo ${fmtNum(qtyInArrivo)}` : undefined}>{disp != null ? fmtNum(disp) : '—'}</td><td style={{ ...tdStyle, fontFamily: 'var(--font-serif)' }}>{fmtNum(mat.in_ordine)}</td><td style={{ ...tdStyle, fontFamily: 'var(--font-serif)' }}>{fmtNum(mat.peso)}</td></>;
                                 })()}
                                 {(orderType === 'OA' || orderType === 'OP' || orderType === 'ACCIAIERIA') && (() => {
-                                  // Earliest client deadline from refs
-                                  const refDates = matRefs.filter(r => r.ref_date).map(r => r.ref_date).sort();
-                                  const scadCl = refDates.length ? refDates[0] : null;
+                                  // All distinct client deadlines from OV refs (a single OA material
+                                  // can feed multiple OV orders with different scadenze).
+                                  const clientDates = [...new Set(
+                                    matRefs.filter(r => r.ref_type === 'OV' && r.ref_date).map(r => r.ref_date)
+                                  )].sort();
                                   return <>
                                     <td style={{ ...tdStyle, fontFamily: 'var(--font-serif)' }}>{fmtNum(mat.ordinato)}</td>
                                     <td style={{ ...tdStyle, fontFamily: 'var(--font-serif)' }}>{fmtNum(mat.ricevuto)}</td>
                                     <td style={{ ...tdStyle, fontFamily: 'var(--font-serif)' }}>{fmtNum(mat.valore_residuo)}</td>
                                     <td style={{ ...tdStyle, fontFamily: 'var(--font-serif)', fontSize: 11 }}>
-                                      {scadCl ? new Date(scadCl).toLocaleDateString('it-IT') : '—'}
+                                      {clientDates.length === 0 ? '—' : (
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                                          {clientDates.map(d => (
+                                            <span key={d}>{new Date(d).toLocaleDateString('it-IT')}</span>
+                                          ))}
+                                        </div>
+                                      )}
                                     </td>
                                   </>;
                                 })()}
@@ -364,6 +426,7 @@ export default function OrderList({ orderType, highlightOrder }) {
                                               <>
                                                 {r.ref_type} {r.ref_order || r.ref_code}
                                                 {r.ref_name ? ` — ${r.ref_name}` : ''}
+                                                {r.ref_date && <> · {new Date(r.ref_date).toLocaleDateString('it-IT')}</>}
                                                 {r.ref_qty != null && <> · qty {fmtNum(r.ref_qty)}</>}
                                               </>
                                             )}

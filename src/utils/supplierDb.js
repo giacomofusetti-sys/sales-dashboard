@@ -331,6 +331,7 @@ function toOrderRow(orderType, order) {
     client_code: order.clientCode || null,
     client_name: order.clientName || null,
     client_ref: order.clientRef || null,
+    client_order_date: order.clientOrderDate || null,
     porto: order.porto || null,
     destinazione: order.destinazione || null,
     valore_residuo: order.valoreResiduo || null,
