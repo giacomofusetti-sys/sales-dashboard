@@ -331,6 +331,8 @@ function toOrderRow(orderType, order) {
     client_code: order.clientCode || null,
     client_name: order.clientName || null,
     client_ref: order.clientRef || null,
+    porto: order.porto || null,
+    destinazione: order.destinazione || null,
     valore_residuo: order.valoreResiduo || null,
     peso_totale: order.pesoTotale || null,
     supplier_code: order.supplierCode || null,
@@ -353,6 +355,7 @@ function toMatRow(orderId, mat) {
     impegnato: mat.impegnato ?? null,
     in_ordine: mat.inOrdine ?? null,
     cons_richiesta: mat.consRichiesta || null,
+    rif_pos_cliente: mat.rifPosCliente || null,
     peso: mat.peso ?? null,
     ordinato: mat.ordinato ?? null,
     ricevuto: mat.ricevuto ?? null,
@@ -406,13 +409,50 @@ export async function importParsedOrders(orderType, parsedOrders, onProgress) {
     await supabase.from('material_refs').delete().in('material_id', chunk);
   }
 
+  // Preserve user-set scadenza_effettiva across re-imports. Keyed by
+  // (order_id, codice_prodotto, scadenza) — stable even when pos changes
+  // (OA/OP now assign a synthetic pos so previously null-pos rows would
+  // otherwise orphan their effective deadlines).
+  const preserveSE = new Map();
+  for (let i = 0; i < allOrderIds.length; i += 200) {
+    const chunk = allOrderIds.slice(i, i + 200);
+    const { data } = await supabase
+      .from('order_materials')
+      .select('order_id, codice_prodotto, scadenza, scadenza_effettiva')
+      .in('order_id', chunk)
+      .not('scadenza_effettiva', 'is', null);
+    for (const m of (data || [])) {
+      preserveSE.set(
+        `${m.order_id}|${m.codice_prodotto}|${m.scadenza || ''}`,
+        m.scadenza_effettiva,
+      );
+    }
+  }
+
+  // Clean up legacy null-pos materials. Parsers now always populate pos
+  // (synthetic for OA/OP), so any remaining null-pos rows would orphan
+  // on the next upsert (which matches on pos).
+  for (let i = 0; i < allOrderIds.length; i += 200) {
+    const chunk = allOrderIds.slice(i, i + 200);
+    await supabase
+      .from('order_materials')
+      .delete()
+      .in('order_id', chunk)
+      .is('pos', null);
+  }
+
   // Step 3: Batch upsert materials → get IDs for ref linking
   // Build flat list of { matRow, refs[] } with order_id resolved
   const matEntries = [];
   for (const order of parsedOrders) {
     const orderId = refToId.get(order.orderRef);
     for (const mat of order.materials || []) {
-      matEntries.push({ row: toMatRow(orderId, mat), refs: mat.refs || [] });
+      const row = toMatRow(orderId, mat);
+      const preserved = preserveSE.get(
+        `${row.order_id}|${row.codice_prodotto}|${row.scadenza || ''}`,
+      );
+      if (preserved) row.scadenza_effettiva = preserved;
+      matEntries.push({ row, refs: mat.refs || [] });
     }
   }
 

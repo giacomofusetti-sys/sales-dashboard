@@ -26,9 +26,12 @@ export default function OrderList({ orderType, highlightOrder }) {
   }, [highlightOrder, typeOrders]);
 
   const filtered = useMemo(() => {
-    if (!search.trim()) return typeOrders;
+    // Hide orders with zero materials (completely evasi / empty) — per Ester,
+    // these are parsing errors and shouldn't appear in the list.
+    const withMats = typeOrders.filter(o => (materials[o.id] || []).length > 0);
+    if (!search.trim()) return withMats;
     const q = search.toLowerCase();
-    return typeOrders.filter(o => {
+    return withMats.filter(o => {
       if (o.order_ref.toLowerCase().includes(q)) return true;
       if (o.client_name?.toLowerCase().includes(q)) return true;
       if (o.supplier_name?.toLowerCase().includes(q)) return true;
@@ -159,6 +162,8 @@ export default function OrderList({ orderType, highlightOrder }) {
                       </a>
                     )}
                     {order.client_code && <span>Cod. cliente {order.client_code}</span>}
+                    {order.destinazione && <span>Dest.: <b>{order.destinazione}</b></span>}
+                    {order.porto && <span>Porto {order.porto}</span>}
                     {order.valore_residuo != null && <span>Val. residuo: <b style={{ fontFamily: 'var(--font-serif)' }}>{order.valore_residuo.toLocaleString('it-IT', { style: 'currency', currency: 'EUR' })}</b></span>}
                     {order.peso_totale != null && <span>Peso tot.: <b style={{ fontFamily: 'var(--font-serif)' }}>{fmtNum(order.peso_totale)}</b></span>}
                     {order.tot_peso_res != null && <span>Peso res.: <b style={{ fontFamily: 'var(--font-serif)' }}>{fmtNum(order.tot_peso_res)}</b></span>}
@@ -181,6 +186,7 @@ export default function OrderList({ orderType, highlightOrder }) {
                             {orderType === 'OL' && <th style={thStyle}>Pos</th>}
                             <th style={thStyle}>Scadenza</th>
                             <th style={thStyle}>Scad. Effettiva</th>
+                            {orderType === 'OV' && <th style={thStyle}>Rif. Pos.</th>}
                             <th style={thStyle}>Codice</th>
                             <th style={thStyle}>Descrizione</th>
                             {orderType === 'OV' && <><th style={thStyle}>Giacenza</th><th style={thStyle}>Impegnato</th><th style={thStyle}>Disponib.</th><th style={thStyle}>In Ordine</th><th style={thStyle}>Peso</th></>}
@@ -232,6 +238,11 @@ export default function OrderList({ orderType, highlightOrder }) {
                                     </button>
                                   )}
                                 </td>
+                                {orderType === 'OV' && (
+                                  <td style={{ ...tdStyle, fontFamily: 'var(--font-serif)', fontSize: 11 }}>
+                                    {mat.rif_pos_cliente || '—'}
+                                  </td>
+                                )}
                                 <td style={{ ...tdStyle, fontFamily: 'var(--font-serif)', fontWeight: 600 }}>{mat.codice_prodotto || '—'}</td>
                                 <td style={tdStyle}>{mat.descrizione || '—'}</td>
                                 {orderType === 'OV' && (() => {

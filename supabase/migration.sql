@@ -117,3 +117,8 @@ CREATE TABLE IF NOT EXISTS agent_overrides (
 
 ALTER TABLE agent_overrides ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Allow all on agent_overrides" ON agent_overrides FOR ALL USING (true) WITH CHECK (true);
+
+-- 7. Sprint 1 fixes (Ester feedback): rif.pos. cliente, porto, destinazione
+ALTER TABLE order_materials ADD COLUMN IF NOT EXISTS rif_pos_cliente TEXT;
+ALTER TABLE supplier_orders ADD COLUMN IF NOT EXISTS porto TEXT;
+ALTER TABLE supplier_orders ADD COLUMN IF NOT EXISTS destinazione TEXT;

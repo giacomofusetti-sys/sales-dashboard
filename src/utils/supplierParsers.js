@@ -91,8 +91,12 @@ function findNumBlock(tokens, targetLen) {
 const OV_HEADER_RE = /^(OV\/\d{4}\/\d{5})\s*-\s*(.*)/;
 const OV_CLIENT_RE = /C\s+(\d+)\s+(.+?)(?:\s{2,}|\s+\d{2}\/\d{2}\/\d{2})/;
 const OV_CLIENT_REF_RE = /(?:Vs\.?\s*Rif\.?|Rif\.?\s*Cliente|N\.?\s*Ord\.?\s*Cl\.?|Rif\.?)\s*:?\s*(\S+.*?)$/i;
+const OV_PORTO_RE = /Porto\s+(Franco|Assegnato)/i;
+const OV_DEST_RE = /DEST\.\s+(.+?)(?:\s+Porto\s+(?:Franco|Assegnato)|\s*$)/i;
 const OV_DATE_RE = /(\d{2}\/\d{2}\/\d{2})/;
 const OV_MATERIAL_RE = /^(?:(\d+)\s+)?(\d{2}\/\d{2}\/\d{2})\s+([A-Z0-9]{1,5}#[A-Z0-9]+)\s+(.*)/;
+const OV_RIFPOS_CONS_RE = /^(\d+)\s+(\d{2}\/\d{2}\/\d{2})$/;
+const OV_CLIENT_REF_BARE_RE = /^[A-Z0-9][A-Z0-9/.\-_]{5,40}$/i;
 const OV_SUPPLIER_RE = /^F\s+(\d+)\s+(.*?)\s+(OA|OP|OL)\/(\d{4}\/\d{7})\s+(\d{2}\/\d{2}\/\d{2})\s+([\d.,]+)\s+(\d{2}\/\d{2}\/\d{2})/;
 const OV_FOOTER_RE = /^Valore Residuo Ordine\s+([\d.,]+)/;
 const OV_PESO_RE = /Peso Totale Ordine\s+([\d.,]+)/;
@@ -149,6 +153,7 @@ export function parseOV(lines) {
   let current = null;
   let currentMat = null;
   let pendingConsRichiesta = null;
+  let pendingRifPosCliente = null;
 
   for (const line of lines) {
     const trimmed = line.trim();
@@ -165,9 +170,11 @@ export function parseOV(lines) {
         orderRef: hm[1],
         rawHeader: trimmed,
         materials: [],
+        _pendingClientRefCheck: true,
       };
       currentMat = null;
       pendingConsRichiesta = null;
+      pendingRifPosCliente = null;
 
       const rest = hm[2];
       const dm = rest.match(OV_DATE_RE);
@@ -178,6 +185,12 @@ export function parseOV(lines) {
         current.clientCode = cm[1];
         current.clientName = cm[2].trim();
       }
+
+      const portoMatch = rest.match(OV_PORTO_RE);
+      if (portoMatch) current.porto = portoMatch[1];
+
+      const destMatch = rest.match(OV_DEST_RE);
+      if (destMatch) current.destinazione = destMatch[1].trim();
 
       const crm = rest.match(OV_CLIENT_REF_RE);
       if (crm) current.clientRef = crm[1].trim();
@@ -194,11 +207,28 @@ export function parseOV(lines) {
       if (pm) current.pesoTotale = parseItalianNumber(pm[1]);
       currentMat = null;
       pendingConsRichiesta = null;
+      pendingRifPosCliente = null;
       continue;
     }
 
-    // Standalone date line before material → cons_richiesta
+    // Standalone peso line (sometimes separate from footer)
+    const pesoStandalone = trimmed.match(OV_PESO_RE);
+    if (pesoStandalone && current.pesoTotale == null) {
+      current.pesoTotale = parseItalianNumber(pesoStandalone[1]);
+      continue;
+    }
+
+    // "Rif.Pos.Cliente  Cons.Richiesta" line (number + date, above the material line)
+    const rifPosMatch = trimmed.match(OV_RIFPOS_CONS_RE);
+    if (rifPosMatch) {
+      pendingRifPosCliente = rifPosMatch[1];
+      pendingConsRichiesta = parseDateDDMMYY(rifPosMatch[2]);
+      continue;
+    }
+
+    // Standalone date line before material → cons_richiesta (no rif.pos.)
     if (DATE_SHORT_RE.test(trimmed)) {
+      pendingRifPosCliente = null;
       pendingConsRichiesta = parseDateDDMMYY(trimmed);
       continue;
     }
@@ -213,6 +243,7 @@ export function parseOV(lines) {
         codiceProdotto: mm[3],
         descrizione: fields.descrizione,
         consRichiesta: fields.consRichiesta || pendingConsRichiesta,
+        rifPosCliente: pendingRifPosCliente,
         giacenza: null, // giacenza comes on next line in pdfjs
         impegnato: fields.impegnato,
         inOrdine: fields.inOrdine,
@@ -220,6 +251,8 @@ export function parseOV(lines) {
         refs: [],
       };
       pendingConsRichiesta = null;
+      pendingRifPosCliente = null;
+      current._pendingClientRefCheck = false;
       current.materials.push(currentMat);
       continue;
     }
@@ -243,6 +276,15 @@ export function parseOV(lines) {
     if (currentMat && currentMat.giacenza == null && PURE_NUM_RE.test(trimmed)) {
       currentMat.giacenza = parseItalianNumber(trimmed);
       continue;
+    }
+
+    // Bare client_ref line right after header (e.g. "261-25-041", "4500359715")
+    if (current._pendingClientRefCheck && !currentMat) {
+      current._pendingClientRefCheck = false;
+      if (!current.clientRef && OV_CLIENT_REF_BARE_RE.test(trimmed)) {
+        current.clientRef = trimmed;
+        continue;
+      }
     }
 
     // Continuation line — append to description (skip DDL/F refs and parenthesized noise)
@@ -273,6 +315,7 @@ export function parseOV(lines) {
       }
     }
     order.materials = [...seen.values()];
+    delete order._pendingClientRefCheck;
   }
 
   return orders;
@@ -405,6 +448,16 @@ export function parseOAOP(lines, forceType) {
       }
     }
     order.materials = [...seen.values()];
+
+    // Assign synthetic pos to distinguish rows with same codice but different scadenza.
+    // OA/OP/ACCIAIERIA PDFs don't carry pos in the material line, so without this the
+    // DB UNIQUE(order_id, codice_prodotto, pos) with NULLS NOT DISTINCT collapses
+    // two rows to one.
+    let posCounter = 1;
+    for (const mat of order.materials) {
+      if (!mat.pos) mat.pos = String(posCounter);
+      posCounter++;
+    }
   }
 
   return orders;
