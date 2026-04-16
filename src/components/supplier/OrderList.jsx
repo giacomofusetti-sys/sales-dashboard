@@ -1,12 +1,34 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { useSupplierData } from '../../hooks/useSupplierData';
 
+// Ref types that represent material in transit (bolle di consegna/produzione).
+// Their ref_qty feeds into the OV availability calculation.
+const DELIVERY_REF_TYPES = new Set(['DDL', 'BPL', 'DDT', 'DDF']);
+
+const SORT_OPTIONS = [
+  { value: 'order_ref', label: 'N° Ordine' },
+  { value: 'name', label: 'Cliente / Fornitore' },
+  { value: 'order_date', label: 'Data Ordine' },
+  { value: 'scadenza', label: 'Scadenza' },
+];
+
+function earliestScadenza(mats) {
+  let min = null;
+  for (const m of mats) {
+    const d = m.scadenza_effettiva || m.scadenza;
+    if (d && (!min || d < min)) min = d;
+  }
+  return min;
+}
+
 export default function OrderList({ orderType, highlightOrder }) {
   const { orders, materials, refs, notes, fetchRefs, upsertNote, deleteNote, updateDeadline } = useSupplierData();
   const [search, setSearch] = useState('');
   const [expandedOrder, setExpandedOrder] = useState(null);
   const [editingNote, setEditingNote] = useState(null);  // { orderRef, codiceProdotto, text, id }
   const [editingDate, setEditingDate] = useState(null);   // { materialId, date }
+  const [sortBy, setSortBy] = useState('order_ref');
+  const [sortDir, setSortDir] = useState('asc');
   const highlightRef = useRef(null);
 
   const typeOrders = orders[orderType] || [];
@@ -29,20 +51,37 @@ export default function OrderList({ orderType, highlightOrder }) {
     // Hide orders with zero materials (completely evasi / empty) — per Ester,
     // these are parsing errors and shouldn't appear in the list.
     const withMats = typeOrders.filter(o => (materials[o.id] || []).length > 0);
-    if (!search.trim()) return withMats;
-    const q = search.toLowerCase();
-    return withMats.filter(o => {
+    const q = search.trim().toLowerCase();
+    const afterSearch = !q ? withMats : withMats.filter(o => {
       if (o.order_ref.toLowerCase().includes(q)) return true;
       if (o.client_name?.toLowerCase().includes(q)) return true;
       if (o.supplier_name?.toLowerCase().includes(q)) return true;
-      // Search in materials
       const mats = materials[o.id] || [];
       return mats.some(m =>
         m.codice_prodotto?.toLowerCase().includes(q) ||
         m.descrizione?.toLowerCase().includes(q)
       );
     });
-  }, [typeOrders, materials, search]);
+
+    const sortKey = (o) => {
+      switch (sortBy) {
+        case 'name':
+          return (o.client_name || o.supplier_name || '').toLowerCase();
+        case 'order_date':
+          return o.order_date || '9999-99-99';
+        case 'scadenza':
+          return earliestScadenza(materials[o.id] || []) || '9999-99-99';
+        default:
+          return (o.order_ref || '').toLowerCase();
+      }
+    };
+    const sorted = [...afterSearch].sort((a, b) => {
+      const ka = sortKey(a), kb = sortKey(b);
+      const cmp = String(ka).localeCompare(String(kb), 'it', { numeric: true });
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
+    return sorted;
+  }, [typeOrders, materials, search, sortBy, sortDir]);
 
   const getNotesForOrder = (orderRef) =>
     notes.filter(n => n.order_type === orderType && n.order_ref === orderRef);
@@ -67,14 +106,33 @@ export default function OrderList({ orderType, highlightOrder }) {
 
   return (
     <div>
-      {/* Search */}
-      <div style={{ marginBottom: 14 }}>
+      {/* Search + Sort */}
+      <div style={{ marginBottom: 14, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
         <input
           type="text" value={search}
           onChange={e => setSearch(e.target.value)}
           placeholder="Cerca ordine, fornitore, prodotto..."
-          style={{ width: '100%', maxWidth: 400, fontSize: 13, padding: '8px 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', background: 'var(--bg-subtle)', color: 'var(--text-primary)', outline: 'none' }}
+          style={{ flex: '1 1 240px', maxWidth: 400, fontSize: 13, padding: '8px 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', background: 'var(--bg-subtle)', color: 'var(--text-primary)', outline: 'none' }}
         />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <label style={{ fontSize: 11, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+            Ordina
+          </label>
+          <select
+            value={sortBy}
+            onChange={e => setSortBy(e.target.value)}
+            style={{ fontSize: 12, padding: '6px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', background: 'var(--bg-subtle)', color: 'var(--text-primary)', fontFamily: 'var(--font-serif)' }}
+          >
+            {SORT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+          <button
+            onClick={() => setSortDir(d => d === 'asc' ? 'desc' : 'asc')}
+            title={sortDir === 'asc' ? 'Crescente' : 'Decrescente'}
+            style={{ fontSize: 13, padding: '5px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', background: 'var(--bg-subtle)', color: 'var(--text-secondary)', cursor: 'pointer', fontFamily: 'var(--font-serif)' }}
+          >
+            {sortDir === 'asc' ? '↑' : '↓'}
+          </button>
+        </div>
       </div>
 
       {/* Count */}
@@ -94,6 +152,7 @@ export default function OrderList({ orderType, highlightOrder }) {
           const isExpanded = expandedOrder === order.id;
           const isHighlighted = highlightOrder === order.order_ref;
           const mats = materials[order.id] || [];
+          const firstScad = earliestScadenza(mats);
           const orderNotes = getNotesForOrder(order.order_ref);
           const orderLevelNotes = orderNotes.filter(n => !n.codice_prodotto);
 
@@ -136,6 +195,11 @@ export default function OrderList({ orderType, highlightOrder }) {
                 <span style={{ fontSize: 13, color: 'var(--text-secondary)', flex: 1 }}>
                   {order.client_name || order.supplier_name || ''}
                 </span>
+                {firstScad && (
+                  <span style={{ fontSize: 11, fontFamily: 'var(--font-serif)', color: 'var(--text-secondary)' }}>
+                    Scad. {new Date(firstScad).toLocaleDateString('it-IT')}
+                  </span>
+                )}
                 <span style={{ fontSize: 11, color: 'var(--text-tertiary)', padding: '2px 8px', background: 'var(--bg-subtle)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}>
                   {mats.length} mat.
                 </span>
@@ -193,7 +257,7 @@ export default function OrderList({ orderType, highlightOrder }) {
                             {(orderType === 'OA' || orderType === 'OP' || orderType === 'ACCIAIERIA') && (
                               <><th style={thStyle}>Ordinato</th><th style={thStyle}>Ricevuto</th><th style={thStyle}>Val. Res.</th><th style={thStyle}>Scad. Cl.</th></>
                             )}
-                            {orderType === 'OL' && <><th style={thStyle}>Qty</th><th style={thStyle}>Kg</th><th style={thStyle}>Status</th><th style={thStyle}>Bolla</th><th style={thStyle}>Cassone</th></>}
+                            {orderType === 'OL' && <><th style={thStyle}>Qty</th><th style={thStyle}>Kg</th><th style={thStyle}>Trattamento</th><th style={thStyle}>Status</th><th style={thStyle}>Bolla</th><th style={thStyle}>Cassone</th></>}
                             <th style={thStyle}>Rif.</th>
                             <th style={thStyle}>Note</th>
                           </tr>
@@ -246,8 +310,15 @@ export default function OrderList({ orderType, highlightOrder }) {
                                 <td style={{ ...tdStyle, fontFamily: 'var(--font-serif)', fontWeight: 600 }}>{mat.codice_prodotto || '—'}</td>
                                 <td style={tdStyle}>{mat.descrizione || '—'}</td>
                                 {orderType === 'OV' && (() => {
-                                  const disp = (mat.giacenza != null && mat.impegnato != null) ? mat.giacenza - mat.impegnato : null;
-                                  return <><td style={{ ...tdStyle, fontFamily: 'var(--font-serif)' }}>{fmtNum(mat.giacenza)}</td><td style={{ ...tdStyle, fontFamily: 'var(--font-serif)' }}>{fmtNum(mat.impegnato)}</td><td style={{ ...tdStyle, fontFamily: 'var(--font-serif)', fontWeight: disp !== null && disp < 0 ? 700 : 400, color: disp !== null && disp < 0 ? 'var(--red)' : 'var(--text-primary)' }}>{disp != null ? fmtNum(disp) : '—'}</td><td style={{ ...tdStyle, fontFamily: 'var(--font-serif)' }}>{fmtNum(mat.in_ordine)}</td><td style={{ ...tdStyle, fontFamily: 'var(--font-serif)' }}>{fmtNum(mat.peso)}</td></>;
+                                  // Disponibilità = giacenza − impegnato (altri ordini) − in_ordine (questo ordine)
+                                  //                 + qty_in_arrivo (somma DDL/BPL/DDT/DDF dai ref)
+                                  const qtyInArrivo = matRefs
+                                    .filter(r => DELIVERY_REF_TYPES.has(r.ref_type))
+                                    .reduce((sum, r) => sum + (r.ref_qty || 0), 0);
+                                  const disp = (mat.giacenza != null)
+                                    ? (mat.giacenza || 0) - (mat.impegnato || 0) - (mat.in_ordine || 0) + qtyInArrivo
+                                    : null;
+                                  return <><td style={{ ...tdStyle, fontFamily: 'var(--font-serif)' }}>{fmtNum(mat.giacenza)}</td><td style={{ ...tdStyle, fontFamily: 'var(--font-serif)' }}>{fmtNum(mat.impegnato)}</td><td style={{ ...tdStyle, fontFamily: 'var(--font-serif)', fontWeight: disp !== null && disp < 0 ? 700 : 400, color: disp !== null && disp < 0 ? 'var(--red)' : 'var(--text-primary)' }} title={qtyInArrivo > 0 ? `giac ${fmtNum(mat.giacenza)} − imp ${fmtNum(mat.impegnato)} − ord ${fmtNum(mat.in_ordine)} + arrivo ${fmtNum(qtyInArrivo)}` : undefined}>{disp != null ? fmtNum(disp) : '—'}</td><td style={{ ...tdStyle, fontFamily: 'var(--font-serif)' }}>{fmtNum(mat.in_ordine)}</td><td style={{ ...tdStyle, fontFamily: 'var(--font-serif)' }}>{fmtNum(mat.peso)}</td></>;
                                 })()}
                                 {(orderType === 'OA' || orderType === 'OP' || orderType === 'ACCIAIERIA') && (() => {
                                   // Earliest client deadline from refs
@@ -266,19 +337,39 @@ export default function OrderList({ orderType, highlightOrder }) {
                                   <>
                                     <td style={{ ...tdStyle, fontFamily: 'var(--font-serif)' }}>{fmtNum(mat.qty_inviata)}</td>
                                     <td style={{ ...tdStyle, fontFamily: 'var(--font-serif)' }}>{fmtNum(mat.kg)}</td>
+                                    <td style={{ ...tdStyle, fontSize: 11 }}>{mat.trattamento || '—'}</td>
                                     <td style={{ ...tdStyle, fontSize: 11 }}>{mat.status || '—'}</td>
-                                    <td style={{ ...tdStyle, fontSize: 11 }}>{mat.bolla || '—'}</td>
-                                    <td style={{ ...tdStyle, fontSize: 11 }}>{mat.cassone || '—'}</td>
+                                    <td style={{ ...tdStyle, fontSize: 11, fontFamily: 'var(--font-serif)' }}>{fmtBolla(mat.bolla)}</td>
+                                    <td style={{ ...tdStyle, fontSize: 11, fontFamily: 'var(--font-serif)' }}>{mat.cassone || '—'}</td>
                                   </>
                                 )}
                                 <td style={tdStyle}>
                                   {matRefs.length > 0 ? (
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                                      {matRefs.map((r, i) => (
-                                        <span key={i} style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
-                                          {r.ref_type} {r.ref_order || r.ref_code} {r.ref_name ? `— ${r.ref_name}` : ''}
-                                        </span>
-                                      ))}
+                                      {matRefs.map((r, i) => {
+                                        const isDelivery = DELIVERY_REF_TYPES.has(r.ref_type);
+                                        return (
+                                          <span key={i} style={{
+                                            fontSize: 11,
+                                            color: isDelivery ? 'var(--accent)' : 'var(--text-secondary)',
+                                            paddingLeft: isDelivery ? 10 : 0,
+                                            fontStyle: isDelivery ? 'italic' : 'normal',
+                                          }}>
+                                            {isDelivery ? (
+                                              <>
+                                                ↳ {fmtBolla(r.ref_order) || `${r.ref_type}.${r.ref_code}`}
+                                                {r.ref_qty != null && <> · qty {fmtNum(r.ref_qty)}</>}
+                                              </>
+                                            ) : (
+                                              <>
+                                                {r.ref_type} {r.ref_order || r.ref_code}
+                                                {r.ref_name ? ` — ${r.ref_name}` : ''}
+                                                {r.ref_qty != null && <> · qty {fmtNum(r.ref_qty)}</>}
+                                              </>
+                                            )}
+                                          </span>
+                                        );
+                                      })}
                                     </div>
                                   ) : '—'}
                                 </td>
@@ -372,6 +463,14 @@ function NotesSection({ notes, onAdd, onEdit, onDelete }) {
 function fmtNum(v) {
   if (v == null) return '—';
   return v.toLocaleString('it-IT', { maximumFractionDigits: 2 });
+}
+
+// Bolla stored as "DDL.1234.18/03/26" — display with space before the date
+// so the number/date boundary is clearer at a glance.
+function fmtBolla(b) {
+  if (!b) return '—';
+  const m = b.match(/^([A-Z]+)\.(\d+)\.(\d{2}\/\d{2}\/\d{2})$/i);
+  return m ? `${m[1]}.${m[2]} ${m[3]}` : b;
 }
 
 function deadlineRowBg(mat) {

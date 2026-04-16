@@ -98,6 +98,8 @@ const OV_MATERIAL_RE = /^(?:(\d+)\s+)?(\d{2}\/\d{2}\/\d{2})\s+([A-Z0-9]{1,5}#[A-
 const OV_RIFPOS_CONS_RE = /^(\d+)\s+(\d{2}\/\d{2}\/\d{2})$/;
 const OV_CLIENT_REF_BARE_RE = /^[A-Z0-9][A-Z0-9/.\-_]{5,40}$/i;
 const OV_SUPPLIER_RE = /^F\s+(\d+)\s+(.*?)\s+(OA|OP|OL)\/(\d{4}\/\d{7})\s+(\d{2}\/\d{2}\/\d{2})\s+([\d.,]+)\s+(\d{2}\/\d{2}\/\d{2})/;
+// DDL/BPL/DDT/DDF: delivery note lines (bolle). Format "DDL.123.18/03/26 [qty]"
+const OV_DDL_RE = /^(DDL|BPL|DDT|DDF)\.(\d+)\.(\d{2}\/\d{2}\/\d{2})(?:\s+([\d.,]+))?/;
 const OV_FOOTER_RE = /^Valore Residuo Ordine\s+([\d.,]+)/;
 const OV_PESO_RE = /Peso Totale Ordine\s+([\d.,]+)/;
 
@@ -268,6 +270,21 @@ export function parseOV(lines) {
         refDate: parseDateDDMMYY(sm[5]),
         refQty: parseItalianNumber(sm[6]),
         deliveryDate: parseDateDDMMYY(sm[7]),
+      });
+      continue;
+    }
+
+    // Delivery/production note line (DDL/BPL/DDT/DDF) — qty of material already
+    // shipped/in-transit. Needed for disponibilità calculation.
+    const ddlMatch = trimmed.match(OV_DDL_RE);
+    if (ddlMatch && currentMat) {
+      currentMat.refs.push({
+        refType: ddlMatch[1],
+        refCode: ddlMatch[2],
+        refName: '',
+        refOrder: `${ddlMatch[1]}.${ddlMatch[2]}.${ddlMatch[3]}`,
+        refDate: parseDateDDMMYY(ddlMatch[3]),
+        refQty: ddlMatch[4] ? parseItalianNumber(ddlMatch[4]) : null,
       });
       continue;
     }
