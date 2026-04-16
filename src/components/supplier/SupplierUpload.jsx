@@ -1,12 +1,14 @@
 import { useState, useRef } from 'react';
 import { useSupplierData } from '../../hooks/useSupplierData';
 import { extractPdfLines } from '../../utils/pdfExtract';
-import { parseByType, classifyMixedOrders } from '../../utils/supplierParsers';
+import { parseByType } from '../../utils/supplierParsers';
 
 const UPLOAD_TYPES = [
-  { id: 'OV', label: 'OV — Ordini Vendita', hint: 'g22' },
-  { id: 'OL', label: 'OL — Ordini Lavorazione', hint: 'g04' },
-  { id: 'MIXED', label: 'OA + OP + Acciaieria', hint: 'g00' },
+  { id: 'OV',         label: 'OV',         sub: 'Ordini Vendita' },
+  { id: 'OL',         label: 'OL',         sub: 'Ordini Lavorazione' },
+  { id: 'OA',         label: 'OA',         sub: 'Ordini Acquisto' },
+  { id: 'OP',         label: 'OP',         sub: 'Ordini Produzione' },
+  { id: 'ACCIAIERIA', label: 'ACCIAIERIA', sub: 'Ordini Acciaieria' },
 ];
 
 export default function SupplierUpload() {
@@ -15,8 +17,10 @@ export default function SupplierUpload() {
   const [progress, setProgress] = useState(null); // { type, file, phase, detail }
   const ovRef = useRef(null);
   const olRef = useRef(null);
-  const mixedRef = useRef(null);
-  const inputRefs = { OV: ovRef, OL: olRef, MIXED: mixedRef };
+  const oaRef = useRef(null);
+  const opRef = useRef(null);
+  const accRef = useRef(null);
+  const refs = { OV: ovRef, OL: olRef, OA: oaRef, OP: opRef, ACCIAIERIA: accRef };
 
   const handleFiles = async (files, forceType) => {
     const newResults = [];
@@ -42,40 +46,14 @@ export default function SupplierUpload() {
           setProgress({ type: forceType, file: file.name, phase: 'save', detail: `${current}/${total} ordini` });
         };
 
-        if (forceType === 'MIXED') {
-          const grouped = classifyMixedOrders(parsed);
-          const breakdown = [];
-          let totalOrders = 0, totalMaterials = 0, totalRefs = 0;
-
-          for (const subType of ['OA', 'OP', 'ACCIAIERIA']) {
-            const subOrders = grouped[subType];
-            if (!subOrders.length) continue;
-            setProgress({ type: forceType, file: file.name, phase: 'save', detail: `${subType}... (${subOrders.length} ordini)` });
-            const result = await importData(subType, subOrders, saveProgress);
-            totalOrders += result.totalOrders;
-            totalMaterials += result.totalMaterials;
-            totalRefs += result.totalRefs;
-            breakdown.push({ type: subType, orders: result.totalOrders });
-          }
-
-          newResults.push({
-            file: file.name,
-            type: 'MIXED',
-            orders: totalOrders,
-            materials: totalMaterials,
-            refs: totalRefs,
-            breakdown,
-          });
-        } else {
-          const result = await importData(forceType, parsed, saveProgress);
-          newResults.push({
-            file: file.name,
-            type: forceType,
-            orders: result.totalOrders,
-            materials: result.totalMaterials,
-            refs: result.totalRefs,
-          });
-        }
+        const result = await importData(forceType, parsed, saveProgress);
+        newResults.push({
+          file: file.name,
+          type: forceType,
+          orders: result.totalOrders,
+          materials: result.totalMaterials,
+          refs: result.totalRefs,
+        });
       } catch (err) {
         console.error('[SupplierUpload]', err);
         newResults.push({ file: file.name, error: err.message });
@@ -107,7 +85,7 @@ export default function SupplierUpload() {
         Carica PDF ordini da Embyon
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12, marginBottom: 12 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 10, marginBottom: 12 }}>
         {UPLOAD_TYPES.map(t => {
           const isActive = progress?.type === t.id;
           const typeResults = results[t.id] || [];
@@ -115,30 +93,30 @@ export default function SupplierUpload() {
             <div key={t.id}>
               <button
                 disabled={busy}
-                onClick={() => inputRefs[t.id].current?.click()}
+                onClick={() => refs[t.id].current?.click()}
                 onDrop={onDrop(t.id)}
                 onDragOver={e => e.preventDefault()}
                 style={{
                   width: '100%',
                   display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-                  gap: 6, padding: '20px 12px',
+                  gap: 4, padding: '18px 10px',
                   border: `2px dashed ${isActive ? 'var(--accent)' : 'var(--border-mid)'}`,
                   borderRadius: 'var(--radius-lg)',
                   background: 'var(--bg-subtle)', color: 'var(--text-primary)',
-                  fontFamily: 'var(--font-serif)', fontSize: 14, fontWeight: 600,
+                  fontFamily: 'var(--font-serif)',
                   cursor: busy ? 'default' : 'pointer',
                   opacity: busy && !isActive ? 0.5 : 1,
                   transition: 'border-color 0.15s, opacity 0.15s',
                 }}
               >
-                <span style={{ fontSize: 22 }}>📄</span>
-                <span>{t.label}</span>
-                <span style={{ fontSize: 11, fontFamily: 'inherit', fontWeight: 400, color: 'var(--text-tertiary)' }}>
-                  ({t.hint})
+                <span style={{ fontSize: 20 }}>📄</span>
+                <span style={{ fontSize: 15, fontWeight: 700 }}>{t.label}</span>
+                <span style={{ fontSize: 10, fontFamily: 'inherit', fontWeight: 400, color: 'var(--text-tertiary)', textAlign: 'center' }}>
+                  {t.sub}
                 </span>
               </button>
               <input
-                ref={inputRefs[t.id]}
+                ref={refs[t.id]}
                 type="file"
                 accept=".pdf"
                 multiple
@@ -181,13 +159,6 @@ export default function SupplierUpload() {
                         </div>
                         {r.error ? (
                           <div style={{ color: 'var(--red)' }}>{r.error}</div>
-                        ) : r.breakdown ? (
-                          <div style={{ color: 'var(--green)' }}>
-                            {r.breakdown.map(b => `${b.type} ${b.orders}`).join(' · ')}
-                            <span style={{ color: 'var(--text-tertiary)', marginLeft: 6 }}>
-                              ({r.materials} mat., {r.refs} rif.)
-                            </span>
-                          </div>
                         ) : (
                           <div style={{ color: 'var(--green)' }}>
                             {r.orders} ordini · {r.materials} mat. · {r.refs} rif.
