@@ -474,6 +474,7 @@ export async function importParsedOrders(orderType, parsedOrders, onProgress) {
   const dedupedEntries = [...dedupedMap.values()];
 
   const matKeyToRefs = new Map(); // "orderId|codice|pos" → refs[]
+  const ordersWithMatsSet = new Set();
   for (let i = 0; i < dedupedEntries.length; i += BATCH_MATERIALS) {
     const chunk = dedupedEntries.slice(i, i + BATCH_MATERIALS);
     const rows = chunk.map(e => e.row);
@@ -492,6 +493,7 @@ export async function importParsedOrders(orderType, parsedOrders, onProgress) {
       chunkLookup.set(key, entry.refs);
     }
     for (const row of data) {
+      ordersWithMatsSet.add(row.order_id);
       const key = `${row.order_id}|${row.codice_prodotto}|${row.pos}`;
       const refs = chunkLookup.get(key);
       if (refs?.length) matKeyToRefs.set(row.id, refs);
@@ -521,5 +523,5 @@ export async function importParsedOrders(orderType, parsedOrders, onProgress) {
   }
   totalRefs = allRefRows.length;
 
-  return { totalOrders, totalMaterials, totalRefs };
+  return { totalOrders, totalMaterials, totalRefs, ordersWithMaterials: ordersWithMatsSet.size };
 }

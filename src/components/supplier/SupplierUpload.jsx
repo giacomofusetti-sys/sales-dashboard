@@ -51,6 +51,7 @@ export default function SupplierUpload() {
           file: file.name,
           type: forceType,
           orders: result.totalOrders,
+          ordersWithMats: result.ordersWithMaterials,
           materials: result.totalMaterials,
           refs: result.totalRefs,
         });
@@ -161,7 +162,7 @@ export default function SupplierUpload() {
                           <div style={{ color: 'var(--red)' }}>{r.error}</div>
                         ) : (
                           <div style={{ color: 'var(--green)' }}>
-                            {r.orders} ordini · {r.materials} mat. · {r.refs} rif.
+                            {r.orders} ordini ({r.ordersWithMats} con materiali) · {r.materials} mat. · {r.refs} rif.
                           </div>
                         )}
                       </div>
