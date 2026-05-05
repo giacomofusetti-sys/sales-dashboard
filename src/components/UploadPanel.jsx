@@ -1,9 +1,10 @@
 import { useRef } from 'react';
+import { UserPlus } from 'lucide-react';
 import { useData } from '../hooks/useData';
 import { MONTH_LABELS } from '../utils/parsers';
 
 const S = {
-  grid: { display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 8, marginBottom: 16 },
+  grid: { display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 8, marginBottom: 16 },
   card: { background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', padding: '10px 14px', cursor: 'pointer', transition: 'border-color 0.15s' },
   cardDisabled: { opacity: 0.45, cursor: 'not-allowed' },
   label: { fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.7px', color: 'var(--text-secondary)', marginBottom: 3 },
@@ -14,8 +15,8 @@ const S = {
 };
 
 export default function UploadPanel({ canUpload }) {
-  const { store, loading, error, uploadBudget, uploadAcquisito, uploadFatturato, uploadOrdiniAperti, newClientsLastUpload, setNewClientsLastUpload } = useData();
-  const refs = { budget: useRef(), acq: useRef(), fat: useRef(), ord: useRef() };
+  const { store, loading, error, uploadBudget, uploadAcquisito, uploadFatturato, uploadOrdiniAperti, uploadNewClients, newClientsLastUpload, setNewClientsLastUpload } = useData();
+  const refs = { budget: useRef(), acq: useRef(), fat: useRef(), ord: useRef(), nuovi: useRef() };
 
   const handle = fn => async e => { const f = e.target.files[0]; if (f) await fn(f); e.target.value = ''; };
 
@@ -27,6 +28,7 @@ export default function UploadPanel({ canUpload }) {
     { ref: refs.acq,    fn: uploadAcquisito, label: 'Acquisito mensile', sub: acqMonths || 'Es: Acquisito_marzo_2026.xlsx', loaded: !!acqMonths, enabled: store.budgetLoaded },
     { ref: refs.fat,    fn: uploadFatturato, label: 'Fatturato mensile', sub: fatMonths || 'Es: Fatturato_marzo_2026.xlsx', loaded: !!fatMonths, enabled: store.budgetLoaded },
     { ref: refs.ord,    fn: uploadOrdiniAperti, label: 'Ordini aperti', sub: store.ordiniAperti?.fileDate || 'Dettaglio ordini del mese', loaded: !!store.ordiniAperti, enabled: true },
+    { ref: refs.nuovi,  fn: uploadNewClients, label: 'Nuovi clienti', sub: 'Mappa cliente → agente', loaded: false, enabled: true, icon: UserPlus },
   ];
 
   return (
@@ -52,7 +54,11 @@ export default function UploadPanel({ canUpload }) {
               onClick={() => canUpload && u.enabled && u.ref.current?.click()}
             >
               <div style={S.label}>
-                <span style={{ ...S.dot, background: u.loaded ? 'var(--green)' : 'var(--text-tertiary)' }} />
+                {u.icon ? (
+                  <u.icon size={11} style={{ marginRight: 5, verticalAlign: 'middle', color: 'var(--text-secondary)' }} />
+                ) : (
+                  <span style={{ ...S.dot, background: u.loaded ? 'var(--green)' : 'var(--text-tertiary)' }} />
+                )}
                 {u.label}
               </div>
               <div style={S.sub}>{u.sub}</div>

@@ -272,6 +272,30 @@ export async function saveAgentOverrides() {
   console.log(`[saveAgentOverrides] upserted ${rows.length} overrides`);
 }
 
+// Upsert a batch of cliente→agente entries into agent_overrides.
+// Each entry: { cliente, agente }
+export async function saveNewClientsAgents(entries) {
+  const unique = new Map();
+  for (const { cliente, agente } of entries) {
+    const resolved = resolveAlias(cliente);
+    const cap = normalizeClient(resolved);
+    if (!cap || !agente) continue;
+    unique.set(cap, { ragione_cap: cap, ragione: resolved, agente: agente.toUpperCase() });
+  }
+  const rows = [...unique.values()];
+  if (!rows.length) return [];
+
+  const { error } = await supabase
+    .from('agent_overrides')
+    .upsert(rows, { onConflict: 'ragione_cap' });
+  if (error) {
+    console.error('[saveNewClientsAgents] error:', error.message);
+    throw error;
+  }
+  console.log(`[saveNewClientsAgents] upserted ${rows.length} overrides`);
+  return rows;
+}
+
 export async function loadAgentOverrides() {
   const { data, error } = await supabase
     .from('agent_overrides')

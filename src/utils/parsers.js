@@ -171,6 +171,46 @@ export function parseSalesFile(arrayBuffer, filename) {
   return { month, rows };
 }
 
+// Parse "Nuovi clienti" mapping file: cliente → agente
+// Returns array of { cliente, agente }
+export function parseNewClientsFile(arrayBuffer) {
+  const wb = XLSX.read(arrayBuffer, { type: 'array' });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const raw = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
+
+  // Find header row containing a "CLIENTE" cell
+  let headerRow = -1;
+  let clienteCol = -1;
+  let agenteCol = -1;
+  for (let r = 0; r < raw.length; r++) {
+    const row = raw[r];
+    if (!row) continue;
+    for (let c = 0; c < row.length; c++) {
+      const cell = row[c]?.toString().trim().toUpperCase();
+      if (cell === 'CLIENTE') { clienteCol = c; headerRow = r; }
+      else if (cell === 'AGENTE') { agenteCol = c; if (headerRow === -1) headerRow = r; }
+    }
+    if (clienteCol !== -1 && agenteCol !== -1) { headerRow = r; break; }
+  }
+
+  if (headerRow === -1 || clienteCol === -1 || agenteCol === -1) {
+    throw new Error('Header CLIENTE/AGENTE non trovato nel file');
+  }
+
+  const entries = [];
+  for (let r = headerRow + 1; r < raw.length; r++) {
+    const row = raw[r];
+    if (!row) continue;
+    const cliente = row[clienteCol]?.toString().trim();
+    const agente = row[agenteCol]?.toString().trim();
+    if (!cliente || !agente) continue;
+    entries.push({ cliente, agente: agente.toUpperCase() });
+  }
+
+  console.log(`[parseNewClientsFile] header at row ${headerRow}, cliente col ${clienteCol}, agente col ${agenteCol}, ${entries.length} entries`);
+  return entries;
+}
+
 // Parse Ordini Aperti file
 // Returns: { date, rows: [{cliente, articolo, rifDoc, dataConsegna, ggRitardo, qtaAperti, valoreAperti}] }
 export function parseOrdiniAperti(arrayBuffer, filename) {

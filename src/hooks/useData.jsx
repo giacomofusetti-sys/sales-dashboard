@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useCallback, useEffect } from 'react';
-import { parseBudget, parseSalesFile, parseOrdiniAperti, normalizeClient } from '../utils/parsers';
+import { parseBudget, parseSalesFile, parseOrdiniAperti, parseNewClientsFile, normalizeClient } from '../utils/parsers';
 import {
   supabase,
   loadBudgetFromDB, saveBudgetToDB,
@@ -8,6 +8,7 @@ import {
   loadOrdiniApertiDB, saveOrdiniAperti,
   upsertCustomer,
   loadAgentOverrides,
+  saveNewClientsAgents,
 } from '../utils/supabase';
 
 const DataContext = createContext(null);
@@ -171,6 +172,24 @@ export function DataProvider({ children }) {
     finally { setLoading(false); }
   }, []);
 
+  const uploadNewClients = useCallback(async (file) => {
+    setLoading(true); setError(null);
+    try {
+      const buf = await file.arrayBuffer();
+      const entries = parseNewClientsFile(buf);
+      if (!entries.length) throw new Error('Nessuna riga cliente/agente trovata');
+      const upserted = await saveNewClientsAgents(entries);
+
+      const overrides = await loadAgentOverrides();
+      const withOverrides = applyAgentOverrides(store.customers, overrides);
+      logMissingAgents(withOverrides, 'uploadNewClients', overrides);
+
+      setNewClientsLastUpload(upserted.map(r => r.ragione));
+      setStore(prev => ({ ...prev, customers: withOverrides, lastUpdated: new Date().toISOString() }));
+    } catch (e) { setError('Errore nuovi clienti: ' + e.message); }
+    finally { setLoading(false); }
+  }, [store.customers]);
+
   const resetAll = useCallback(async () => {
     if (!window.confirm('Sicuro? Tutti i dati verranno eliminati dal database.')) return;
     setLoading(true);
@@ -198,7 +217,7 @@ export function DataProvider({ children }) {
   return (
     <DataContext.Provider value={{
       store, loading, error,
-      uploadBudget, uploadAcquisito, uploadFatturato, uploadOrdiniAperti,
+      uploadBudget, uploadAcquisito, uploadFatturato, uploadOrdiniAperti, uploadNewClients,
       resetAll, availableMonths, lastMonth,
       newClientsLastUpload, setNewClientsLastUpload,
     }}>
