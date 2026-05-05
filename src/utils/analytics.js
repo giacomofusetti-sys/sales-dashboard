@@ -298,10 +298,26 @@ const EURO_FMT = '_-* #,##0_-;-* #,##0_-;_-* "-"??_-;_-@_-';
 const PCT_FMT = '0.0%';
 const YELLOW_PCT = 'FFFF00';
 const YELLOW_NEW = 'FFE699';
+const GREEN_BG = 'C6EFCE';
+const GREEN_FG = '006100';
+const RED_BG = 'FFC7CE';
+const RED_FG = '9C0006';
 
 function xlNum(v) { return Math.round((v || 0) * 100) / 100; }
 
 function fill(rgb) { return { patternType: 'solid', fgColor: { rgb }, bgColor: { rgb } }; }
+
+// Conditional styling for % columns: green if >0, red if <0, yellow if 0/null/undefined.
+// `fontExtra` lets callers preserve other font props (e.g. bold for the TOTALI row).
+function pctStyle(value, fontExtra = {}) {
+  if (value === null || value === undefined || value === 0) {
+    return { numFmt: PCT_FMT, fill: fill(YELLOW_PCT), font: { ...fontExtra } };
+  }
+  if (value > 0) {
+    return { numFmt: PCT_FMT, fill: fill(GREEN_BG), font: { ...fontExtra, color: { rgb: GREEN_FG } } };
+  }
+  return { numFmt: PCT_FMT, fill: fill(RED_BG), font: { ...fontExtra, color: { rgb: RED_FG } } };
+}
 
 function downloadXlsx(ws, filename) {
   const wb = XLSX.utils.book_new();
@@ -328,13 +344,18 @@ export function exportXLSX(rows, filename) {
   const totalBase = { font: { bold: true } };
   ws['A2'] = { t: 's', v: 'TOTALI', s: totalBase };
   if (n > 0) {
+    const totBdg = sorted.reduce((s, r) => s + (r.budgetVend || 0), 0);
+    const totAcq = sorted.reduce((s, r) => s + (r.acquisito || 0), 0);
+    const totFat = sorted.reduce((s, r) => s + (r.fatturato || 0), 0);
+    const totGPct = totBdg ? totAcq / totBdg - 1 : null;
+    const totIPct = totBdg ? totFat / totBdg - 1 : null;
     ws['C2'] = { t: 'n', f: `SUM(C${firstDataRow}:C${lastDataRow})`, s: { ...totalBase, numFmt: EURO_FMT } };
     ws['D2'] = { t: 'n', f: `SUM(D${firstDataRow}:D${lastDataRow})`, s: { ...totalBase, numFmt: EURO_FMT } };
     ws['E2'] = { t: 'n', f: `SUM(E${firstDataRow}:E${lastDataRow})`, s: { ...totalBase, numFmt: EURO_FMT } };
     ws['F2'] = { t: 'n', f: 'C2-E2', s: { ...totalBase, numFmt: EURO_FMT } };
-    ws['G2'] = { t: 'n', f: 'C2/E2-1', s: { ...totalBase, numFmt: PCT_FMT, fill: fill(YELLOW_PCT) } };
+    ws['G2'] = { t: 'n', f: 'C2/E2-1', s: pctStyle(totGPct, { bold: true }) };
     ws['H2'] = { t: 'n', f: 'D2-E2', s: { ...totalBase, numFmt: EURO_FMT } };
-    ws['I2'] = { t: 'n', f: 'D2/E2-1', s: { ...totalBase, numFmt: PCT_FMT, fill: fill(YELLOW_PCT) } };
+    ws['I2'] = { t: 'n', f: 'D2/E2-1', s: pctStyle(totIPct, { bold: true }) };
   }
 
   // Row 3: headers
@@ -348,7 +369,9 @@ export function exportXLSX(rows, filename) {
     const rn = firstDataRow + idx;
     const rowFill = r.isNew ? { fill: fill(YELLOW_NEW) } : {};
     const numStyle = { numFmt: EURO_FMT, ...rowFill };
-    const pctStyle = { numFmt: PCT_FMT, fill: fill(YELLOW_PCT) };
+    const bv = r.budgetVend || 0;
+    const gPct = bv ? (r.acquisito || 0) / bv - 1 : null;
+    const iPct = bv ? (r.fatturato || 0) / bv - 1 : null;
 
     ws[`A${rn}`] = { t: 's', v: r.cliente || '', s: { ...rowFill } };
     ws[`B${rn}`] = { t: 's', v: r.agente || '', s: { ...rowFill } };
@@ -356,9 +379,9 @@ export function exportXLSX(rows, filename) {
     ws[`D${rn}`] = { t: 'n', v: xlNum(r.fatturato), s: numStyle };
     ws[`E${rn}`] = { t: 'n', v: xlNum(r.budgetVend), s: numStyle };
     ws[`F${rn}`] = { t: 'n', f: `C${rn}-E${rn}`, s: numStyle };
-    ws[`G${rn}`] = { t: 'n', f: `IFERROR(C${rn}/E${rn}-1,"")`, s: pctStyle };
+    ws[`G${rn}`] = { t: 'n', f: `IFERROR(C${rn}/E${rn}-1,"")`, s: pctStyle(gPct) };
     ws[`H${rn}`] = { t: 'n', f: `D${rn}-E${rn}`, s: numStyle };
-    ws[`I${rn}`] = { t: 'n', f: `IFERROR(D${rn}/E${rn}-1,"")`, s: pctStyle };
+    ws[`I${rn}`] = { t: 'n', f: `IFERROR(D${rn}/E${rn}-1,"")`, s: pctStyle(iPct) };
     ws[`J${rn}`] = { t: 's', v: '', s: { ...rowFill } };
   });
 
@@ -382,13 +405,18 @@ export function exportAgentsSummaryXLSX(agentRows, filename) {
   const totalBase = { font: { bold: true } };
   ws['A2'] = { t: 's', v: 'TOTALI', s: totalBase };
   if (n > 0) {
+    const totBdg = sorted.reduce((s, r) => s + (r.budgetVend || 0), 0);
+    const totAcq = sorted.reduce((s, r) => s + (r.acquisito || 0), 0);
+    const totFat = sorted.reduce((s, r) => s + (r.fatturato || 0), 0);
+    const totFPct = totBdg ? totAcq / totBdg - 1 : null;
+    const totHPct = totBdg ? totFat / totBdg - 1 : null;
     ws['B2'] = { t: 'n', f: `SUM(B${firstDataRow}:B${lastDataRow})`, s: { ...totalBase, numFmt: EURO_FMT } };
     ws['C2'] = { t: 'n', f: `SUM(C${firstDataRow}:C${lastDataRow})`, s: { ...totalBase, numFmt: EURO_FMT } };
     ws['D2'] = { t: 'n', f: `SUM(D${firstDataRow}:D${lastDataRow})`, s: { ...totalBase, numFmt: EURO_FMT } };
     ws['E2'] = { t: 'n', f: 'B2-D2', s: { ...totalBase, numFmt: EURO_FMT } };
-    ws['F2'] = { t: 'n', f: 'B2/D2-1', s: { ...totalBase, numFmt: PCT_FMT, fill: fill(YELLOW_PCT) } };
+    ws['F2'] = { t: 'n', f: 'B2/D2-1', s: pctStyle(totFPct, { bold: true }) };
     ws['G2'] = { t: 'n', f: 'C2-D2', s: { ...totalBase, numFmt: EURO_FMT } };
-    ws['H2'] = { t: 'n', f: 'C2/D2-1', s: { ...totalBase, numFmt: PCT_FMT, fill: fill(YELLOW_PCT) } };
+    ws['H2'] = { t: 'n', f: 'C2/D2-1', s: pctStyle(totHPct, { bold: true }) };
     ws['I2'] = { t: 'n', f: `SUM(I${firstDataRow}:I${lastDataRow})`, s: { ...totalBase } };
   }
 
@@ -400,16 +428,18 @@ export function exportAgentsSummaryXLSX(agentRows, filename) {
   sorted.forEach((a, idx) => {
     const rn = firstDataRow + idx;
     const numStyle = { numFmt: EURO_FMT };
-    const pctStyle = { numFmt: PCT_FMT, fill: fill(YELLOW_PCT) };
+    const bv = a.budgetVend || 0;
+    const fPct = bv ? (a.acquisito || 0) / bv - 1 : null;
+    const hPct = bv ? (a.fatturato || 0) / bv - 1 : null;
 
     ws[`A${rn}`] = { t: 's', v: a.agente || '' };
     ws[`B${rn}`] = { t: 'n', v: xlNum(a.acquisito), s: numStyle };
     ws[`C${rn}`] = { t: 'n', v: xlNum(a.fatturato), s: numStyle };
     ws[`D${rn}`] = { t: 'n', v: xlNum(a.budgetVend), s: numStyle };
     ws[`E${rn}`] = { t: 'n', f: `B${rn}-D${rn}`, s: numStyle };
-    ws[`F${rn}`] = { t: 'n', f: `IFERROR(B${rn}/D${rn}-1,"")`, s: pctStyle };
+    ws[`F${rn}`] = { t: 'n', f: `IFERROR(B${rn}/D${rn}-1,"")`, s: pctStyle(fPct) };
     ws[`G${rn}`] = { t: 'n', f: `C${rn}-D${rn}`, s: numStyle };
-    ws[`H${rn}`] = { t: 'n', f: `IFERROR(C${rn}/D${rn}-1,"")`, s: pctStyle };
+    ws[`H${rn}`] = { t: 'n', f: `IFERROR(C${rn}/D${rn}-1,"")`, s: pctStyle(hPct) };
     ws[`I${rn}`] = { t: 'n', v: a.clienti?.length || 0 };
   });
 
