@@ -7,14 +7,51 @@ const key = import.meta.env.VITE_SUPABASE_KEY;
 
 export const supabase = createClient(url, key);
 
+/**
+ * Fetch tutte le righe di una tabella, paginando per superare
+ * il limite default Supabase di 1000 righe.
+ *
+ * @param {string} table - nome tabella
+ * @param {object} options - { columns?: string, orderBy?: string, ascending?: boolean, filter?: (qb) => qb }
+ * @returns {Promise<Array>} tutte le righe
+ */
+export async function fetchAllRows(table, options = {}) {
+  const {
+    columns = '*',
+    orderBy = 'id',
+    ascending = true,
+    filter = null,
+  } = options;
+  const pageSize = 1000;
+  const all = [];
+  let from = 0;
+
+  while (true) {
+    let qb = supabase
+      .from(table)
+      .select(columns)
+      .order(orderBy, { ascending })
+      .range(from, from + pageSize - 1);
+    if (filter) qb = filter(qb);
+
+    const { data, error } = await qb;
+    if (error) {
+      console.error(`fetchAllRows(${table}) error:`, error);
+      throw error;
+    }
+    if (!data || data.length === 0) break;
+    all.push(...data);
+    if (data.length < pageSize) break; // ultima pagina
+    from += pageSize;
+  }
+
+  return all;
+}
+
 // ── Budget customers ──────────────────────────────────────────
 export async function loadBudgetFromDB() {
-  const { data, error } = await supabase
-    .from('budget_customers')
-    .select('*')
-    .order('ragione');
-  if (error) throw error;
-  return data.map(dbToCustomer);1
+  const data = await fetchAllRows('budget_customers', { orderBy: 'ragione' });
+  return data.map(dbToCustomer);
 }
 
 export async function saveBudgetToDB(customers) {
@@ -60,10 +97,7 @@ export async function upsertCustomer(customer) {
 
 // ── Monthly acquisito ─────────────────────────────────────────
 export async function loadAcquisitoDB() {
-  const { data, error } = await supabase
-    .from('monthly_acquisito')
-    .select('*');
-  if (error) throw error;
+  const data = await fetchAllRows('monthly_acquisito');
   // Group by month_idx
   const grouped = {};
   data.forEach(r => {
@@ -104,10 +138,7 @@ export async function saveAcquisito(monthIdx, rows) {
 
 // ── Monthly fatturato ─────────────────────────────────────────
 export async function loadFatturatoDB() {
-  const { data, error } = await supabase
-    .from('monthly_fatturato')
-    .select('*');
-  if (error) throw error;
+  const data = await fetchAllRows('monthly_fatturato');
   const grouped = {};
   data.forEach(r => {
     if (!grouped[r.month_idx]) grouped[r.month_idx] = [];
@@ -146,11 +177,10 @@ export async function saveFatturato(monthIdx, rows) {
 
 // ── Ordini aperti ─────────────────────────────────────────────
 export async function loadOrdiniApertiDB() {
-  const { data, error } = await supabase
-    .from('ordini_aperti')
-    .select('*')
-    .order('created_at', { ascending: false });
-  if (error) throw error;
+  const data = await fetchAllRows('ordini_aperti', {
+    orderBy: 'created_at',
+    ascending: false,
+  });
   if (!data.length) return null;
   const fileDate = data[0].file_date;
   const rows = data.map(r => ({
@@ -297,10 +327,13 @@ export async function saveNewClientsAgents(entries) {
 }
 
 export async function loadAgentOverrides() {
-  const { data, error } = await supabase
-    .from('agent_overrides')
-    .select('ragione_cap, ragione, agente');
-  if (error) {
+  let data;
+  try {
+    data = await fetchAllRows('agent_overrides', {
+      columns: 'ragione_cap, ragione, agente',
+      orderBy: 'ragione_cap',
+    });
+  } catch (error) {
     console.error('[loadAgentOverrides] error (is the agent_overrides table created?):', error.message);
     return [];
   }
