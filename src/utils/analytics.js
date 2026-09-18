@@ -103,6 +103,7 @@ export function computeMonthRows(store, month) {
     const budgetVend = budget?.budgetVenditoriMesi[month] || 0;
     const budgetInt = budget?.budgetInternoMesi[month] || 0;
     const budgetVendAnnuale = budget?.budgetVenditoriAnnuale || 0;
+    const budgetIntAnnuale = budget?.budgetInternoAnnuale || 0;
     const ordiniAnno = ordiniMap[cap] || 0;
     const previsioneAnno = fatturato + ordiniAnno;
 
@@ -116,6 +117,7 @@ export function computeMonthRows(store, month) {
       budgetVend,
       budgetInt,
       budgetVendAnnuale,
+      budgetIntAnnuale,
       scostAcqVsBudgetVend: acquisito - budgetVend,
       pctAcqVsBudgetVend: pct(acquisito, budgetVend),
       scostFatVsBudgetVend: fatturato - budgetVend,
@@ -127,6 +129,7 @@ export function computeMonthRows(store, month) {
       ordiniAnno,
       previsioneAnno,
       pctPrevVsBudgetVendAnn: pct(previsioneAnno, budgetVendAnnuale),
+      pctPrevVsBudgetIntAnn: pct(previsioneAnno, budgetIntAnnuale),
     });
   });
 
@@ -190,6 +193,7 @@ export function computeYTDRows(store, upToMonth) {
       budgetInt += budget?.budgetInternoMesi[m] || 0;
     }
     const budgetVendAnnuale = budget?.budgetVenditoriAnnuale || 0;
+    const budgetIntAnnuale = budget?.budgetInternoAnnuale || 0;
     const ordiniAnno = ordiniMap[r.cap] || 0;
     const previsioneAnno = r.fatturato + ordiniAnno;
 
@@ -203,6 +207,7 @@ export function computeYTDRows(store, upToMonth) {
       budgetVend,
       budgetInt,
       budgetVendAnnuale,
+      budgetIntAnnuale,
       scostAcqVsBudgetVend: r.acquisito - budgetVend,
       pctAcqVsBudgetVend: pct(r.acquisito, budgetVend),
       scostFatVsBudgetVend: r.fatturato - budgetVend,
@@ -214,6 +219,7 @@ export function computeYTDRows(store, upToMonth) {
       ordiniAnno,
       previsioneAnno,
       pctPrevVsBudgetVendAnn: pct(previsioneAnno, budgetVendAnnuale),
+      pctPrevVsBudgetIntAnn: pct(previsioneAnno, budgetIntAnnuale),
     };
   }).sort((a, b) => b.acquisito - a.acquisito);
 }
@@ -222,12 +228,13 @@ export function groupByAgent(rows) {
   const map = {};
   rows.forEach(r => {
     const ag = r.agente || '(senza agente)';
-    if (!map[ag]) map[ag] = { agente: ag, acquisito: 0, fatturato: 0, budgetVend: 0, budgetInt: 0, budgetVendAnnuale: 0, ordiniAnno: 0, previsioneAnno: 0, clienti: [] };
+    if (!map[ag]) map[ag] = { agente: ag, acquisito: 0, fatturato: 0, budgetVend: 0, budgetInt: 0, budgetVendAnnuale: 0, budgetIntAnnuale: 0, ordiniAnno: 0, previsioneAnno: 0, clienti: [] };
     map[ag].acquisito += r.acquisito;
     map[ag].fatturato += r.fatturato;
     map[ag].budgetVend += r.budgetVend;
     map[ag].budgetInt += r.budgetInt;
     map[ag].budgetVendAnnuale += r.budgetVendAnnuale || 0;
+    map[ag].budgetIntAnnuale += r.budgetIntAnnuale || 0;
     map[ag].ordiniAnno += r.ordiniAnno || 0;
     map[ag].previsioneAnno += r.previsioneAnno || 0;
     map[ag].clienti.push(r);
@@ -243,6 +250,7 @@ export function groupByAgent(rows) {
     scostFatVsBudgetInt: a.fatturato - a.budgetInt,
     pctFatVsBudgetInt: pct(a.fatturato, a.budgetInt),
     pctPrevVsBudgetVendAnn: pct(a.previsioneAnno, a.budgetVendAnnuale),
+    pctPrevVsBudgetIntAnn: pct(a.previsioneAnno, a.budgetIntAnnuale),
   })).sort((a, b) => b.acquisito - a.acquisito);
 }
 
@@ -305,6 +313,14 @@ const RED_FG = '9C0006';
 
 function xlNum(v) { return Math.round((v || 0) * 100) / 100; }
 
+// Percentage cells written as values (not formulas, when the divisor isn't a sheet
+// column). Keeps 4 decimals on the ratio so the 0.0% format stays accurate; a null
+// ratio (divisor = 0) becomes an empty cell, like the IFERROR(...,"") formulas.
+function xlPctCell(ratio, style) {
+  if (ratio === null || ratio === undefined || !isFinite(ratio)) return { t: 's', v: '', s: style };
+  return { t: 'n', v: Math.round(ratio * 10000) / 10000, s: style };
+}
+
 function fill(rgb) { return { patternType: 'solid', fgColor: { rgb }, bgColor: { rgb } }; }
 
 // Conditional styling for % columns: green if >0, red if <0, yellow if 0/null/undefined.
@@ -334,7 +350,12 @@ function downloadXlsx(ws, filename) {
 
 export function exportXLSX(rows, filename) {
   const sorted = [...rows].sort((a, b) => (b.budgetVend || 0) - (a.budgetVend || 0));
-  const headers = ['Cliente', 'Agente', 'Acquisito', 'Fatturato', 'Bdg Vend.', 'Δ Acq/BV', '% Acq/BV', 'Δ Fat/BV', '% Fat/BV', 'Note'];
+  const headers = [
+    'Cliente', 'Agente', 'Acquisito', 'Fatturato',
+    'Bdg Vend. YTD', 'Δ Acq. vs BV', '% Acq./BV', 'Δ Fatt. vs BV', '% Fatt./BV',
+    'Bdg Int. YTD', 'Δ Acq. vs BI', '% Acq./BI', 'Δ Fatt. vs BI', '% Fatt./BI',
+    'Prev. Anno', '% Prev./BV Ann.', '% Prev./BI Ann.', 'Note',
+  ];
   const n = sorted.length;
   const firstDataRow = 4;
   const lastDataRow = firstDataRow + n - 1;
@@ -344,18 +365,34 @@ export function exportXLSX(rows, filename) {
   const totalBase = { font: { bold: true } };
   ws['A2'] = { t: 's', v: 'TOTALI', s: totalBase };
   if (n > 0) {
-    const totBdg = sorted.reduce((s, r) => s + (r.budgetVend || 0), 0);
-    const totAcq = sorted.reduce((s, r) => s + (r.acquisito || 0), 0);
-    const totFat = sorted.reduce((s, r) => s + (r.fatturato || 0), 0);
-    const totGPct = totBdg ? totAcq / totBdg - 1 : null;
-    const totIPct = totBdg ? totFat / totBdg - 1 : null;
-    ws['C2'] = { t: 'n', f: `SUM(C${firstDataRow}:C${lastDataRow})`, s: { ...totalBase, numFmt: EURO_FMT } };
-    ws['D2'] = { t: 'n', f: `SUM(D${firstDataRow}:D${lastDataRow})`, s: { ...totalBase, numFmt: EURO_FMT } };
-    ws['E2'] = { t: 'n', f: `SUM(E${firstDataRow}:E${lastDataRow})`, s: { ...totalBase, numFmt: EURO_FMT } };
-    ws['F2'] = { t: 'n', f: 'C2-E2', s: { ...totalBase, numFmt: EURO_FMT } };
-    ws['G2'] = { t: 'n', f: 'C2/E2-1', s: pctStyle(totGPct, { bold: true }) };
-    ws['H2'] = { t: 'n', f: 'D2-E2', s: { ...totalBase, numFmt: EURO_FMT } };
-    ws['I2'] = { t: 'n', f: 'D2/E2-1', s: pctStyle(totIPct, { bold: true }) };
+    const sum = (key) => sorted.reduce((s, r) => s + (r[key] || 0), 0);
+    const totBV = sum('budgetVend');
+    const totBI = sum('budgetInt');
+    const totBVAnn = sum('budgetVendAnnuale');
+    const totBIAnn = sum('budgetIntAnnuale');
+    const totAcq = sum('acquisito');
+    const totFat = sum('fatturato');
+    const totPrev = sum('previsioneAnno');
+    const euroTot = { ...totalBase, numFmt: EURO_FMT };
+
+    ws['C2'] = { t: 'n', f: `SUM(C${firstDataRow}:C${lastDataRow})`, s: euroTot };
+    ws['D2'] = { t: 'n', f: `SUM(D${firstDataRow}:D${lastDataRow})`, s: euroTot };
+    // Budget venditori YTD
+    ws['E2'] = { t: 'n', f: `SUM(E${firstDataRow}:E${lastDataRow})`, s: euroTot };
+    ws['F2'] = { t: 'n', f: 'C2-E2', s: euroTot };
+    ws['G2'] = { t: 'n', f: 'C2/E2-1', s: pctStyle(pct(totAcq, totBV), { bold: true }) };
+    ws['H2'] = { t: 'n', f: 'D2-E2', s: euroTot };
+    ws['I2'] = { t: 'n', f: 'D2/E2-1', s: pctStyle(pct(totFat, totBV), { bold: true }) };
+    // Budget interno YTD (stesso taglio di mesi del budget venditori)
+    ws['J2'] = { t: 'n', f: `SUM(J${firstDataRow}:J${lastDataRow})`, s: euroTot };
+    ws['K2'] = { t: 'n', f: 'C2-J2', s: euroTot };
+    ws['L2'] = { t: 'n', f: 'C2/J2-1', s: pctStyle(pct(totAcq, totBI), { bold: true }) };
+    ws['M2'] = { t: 'n', f: 'D2-J2', s: euroTot };
+    ws['N2'] = { t: 'n', f: 'D2/J2-1', s: pctStyle(pct(totFat, totBI), { bold: true }) };
+    // Previsione anno vs budget annuali (non presenti come colonne → valori calcolati)
+    ws['O2'] = { t: 'n', f: `SUM(O${firstDataRow}:O${lastDataRow})`, s: euroTot };
+    ws['P2'] = xlPctCell(pct(totPrev, totBVAnn), pctStyle(pct(totPrev, totBVAnn), { bold: true }));
+    ws['Q2'] = xlPctCell(pct(totPrev, totBIAnn), pctStyle(pct(totPrev, totBIAnn), { bold: true }));
   }
 
   // Row 3: headers
@@ -370,8 +407,14 @@ export function exportXLSX(rows, filename) {
     const rowFill = r.isNew ? { fill: fill(YELLOW_NEW) } : {};
     const numStyle = { numFmt: EURO_FMT, ...rowFill };
     const bv = r.budgetVend || 0;
-    const gPct = bv ? (r.acquisito || 0) / bv - 1 : null;
-    const iPct = bv ? (r.fatturato || 0) / bv - 1 : null;
+    const bi = r.budgetInt || 0;
+    const prev = r.previsioneAnno || 0;
+    const pAcqBV = pct(r.acquisito || 0, bv);
+    const pFatBV = pct(r.fatturato || 0, bv);
+    const pAcqBI = pct(r.acquisito || 0, bi);
+    const pFatBI = pct(r.fatturato || 0, bi);
+    const pPrevBVAnn = pct(prev, r.budgetVendAnnuale || 0);
+    const pPrevBIAnn = pct(prev, r.budgetIntAnnuale || 0);
 
     ws[`A${rn}`] = { t: 's', v: r.cliente || '', s: { ...rowFill } };
     ws[`B${rn}`] = { t: 's', v: r.agente || '', s: { ...rowFill } };
@@ -379,16 +422,26 @@ export function exportXLSX(rows, filename) {
     ws[`D${rn}`] = { t: 'n', v: xlNum(r.fatturato), s: numStyle };
     ws[`E${rn}`] = { t: 'n', v: xlNum(r.budgetVend), s: numStyle };
     ws[`F${rn}`] = { t: 'n', f: `C${rn}-E${rn}`, s: numStyle };
-    ws[`G${rn}`] = { t: 'n', f: `IFERROR(C${rn}/E${rn}-1,"")`, s: pctStyle(gPct) };
+    ws[`G${rn}`] = { t: 'n', f: `IFERROR(C${rn}/E${rn}-1,"")`, s: pctStyle(pAcqBV) };
     ws[`H${rn}`] = { t: 'n', f: `D${rn}-E${rn}`, s: numStyle };
-    ws[`I${rn}`] = { t: 'n', f: `IFERROR(D${rn}/E${rn}-1,"")`, s: pctStyle(iPct) };
-    ws[`J${rn}`] = { t: 's', v: '', s: { ...rowFill } };
+    ws[`I${rn}`] = { t: 'n', f: `IFERROR(D${rn}/E${rn}-1,"")`, s: pctStyle(pFatBV) };
+    ws[`J${rn}`] = { t: 'n', v: xlNum(r.budgetInt), s: numStyle };
+    ws[`K${rn}`] = { t: 'n', f: `C${rn}-J${rn}`, s: numStyle };
+    ws[`L${rn}`] = { t: 'n', f: `IFERROR(C${rn}/J${rn}-1,"")`, s: pctStyle(pAcqBI) };
+    ws[`M${rn}`] = { t: 'n', f: `D${rn}-J${rn}`, s: numStyle };
+    ws[`N${rn}`] = { t: 'n', f: `IFERROR(D${rn}/J${rn}-1,"")`, s: pctStyle(pFatBI) };
+    ws[`O${rn}`] = { t: 'n', v: xlNum(prev), s: numStyle };
+    ws[`P${rn}`] = xlPctCell(pPrevBVAnn, pctStyle(pPrevBVAnn));
+    ws[`Q${rn}`] = xlPctCell(pPrevBIAnn, pctStyle(pPrevBIAnn));
+    ws[`R${rn}`] = { t: 's', v: '', s: { ...rowFill } };
   });
 
-  ws['!ref'] = `A1:J${Math.max(lastDataRow, 3)}`;
+  ws['!ref'] = `A1:R${Math.max(lastDataRow, 3)}`;
   ws['!cols'] = [
-    { wch: 57 }, { wch: 13 }, { wch: 11 }, { wch: 11 }, { wch: 13 },
-    { wch: 12 }, { wch: 12 }, { wch: 11 }, { wch: 11 }, { wch: 27 },
+    { wch: 57 }, { wch: 13 }, { wch: 11 }, { wch: 11 },
+    { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 14 }, { wch: 12 },
+    { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 14 }, { wch: 12 },
+    { wch: 13 }, { wch: 16 }, { wch: 16 }, { wch: 27 },
   ];
 
   downloadXlsx(ws, filename);
@@ -396,7 +449,12 @@ export function exportXLSX(rows, filename) {
 
 export function exportAgentsSummaryXLSX(agentRows, filename) {
   const sorted = [...agentRows].sort((a, b) => (b.budgetVend || 0) - (a.budgetVend || 0));
-  const headers = ['Agente', 'Acquisito', 'Fatturato', 'Bdg Vend.', 'Δ Acq/BV', '% Acq/BV', 'Δ Fat/BV', '% Fat/BV', 'N. Clienti'];
+  const headers = [
+    'Agente', 'Acquisito', 'Fatturato',
+    'Bdg Vend. YTD', 'Δ Acq. vs BV', '% Acq./BV', 'Δ Fatt. vs BV', '% Fatt./BV',
+    'Bdg Int. YTD', 'Δ Acq. vs BI', '% Acq./BI', 'Δ Fatt. vs BI', '% Fatt./BI',
+    'Prev. Anno', '% Prev./BV Ann.', '% Prev./BI Ann.', 'N. Clienti',
+  ];
   const n = sorted.length;
   const firstDataRow = 4;
   const lastDataRow = firstDataRow + n - 1;
@@ -405,19 +463,35 @@ export function exportAgentsSummaryXLSX(agentRows, filename) {
   const totalBase = { font: { bold: true } };
   ws['A2'] = { t: 's', v: 'TOTALI', s: totalBase };
   if (n > 0) {
-    const totBdg = sorted.reduce((s, r) => s + (r.budgetVend || 0), 0);
-    const totAcq = sorted.reduce((s, r) => s + (r.acquisito || 0), 0);
-    const totFat = sorted.reduce((s, r) => s + (r.fatturato || 0), 0);
-    const totFPct = totBdg ? totAcq / totBdg - 1 : null;
-    const totHPct = totBdg ? totFat / totBdg - 1 : null;
-    ws['B2'] = { t: 'n', f: `SUM(B${firstDataRow}:B${lastDataRow})`, s: { ...totalBase, numFmt: EURO_FMT } };
-    ws['C2'] = { t: 'n', f: `SUM(C${firstDataRow}:C${lastDataRow})`, s: { ...totalBase, numFmt: EURO_FMT } };
-    ws['D2'] = { t: 'n', f: `SUM(D${firstDataRow}:D${lastDataRow})`, s: { ...totalBase, numFmt: EURO_FMT } };
-    ws['E2'] = { t: 'n', f: 'B2-D2', s: { ...totalBase, numFmt: EURO_FMT } };
-    ws['F2'] = { t: 'n', f: 'B2/D2-1', s: pctStyle(totFPct, { bold: true }) };
-    ws['G2'] = { t: 'n', f: 'C2-D2', s: { ...totalBase, numFmt: EURO_FMT } };
-    ws['H2'] = { t: 'n', f: 'C2/D2-1', s: pctStyle(totHPct, { bold: true }) };
-    ws['I2'] = { t: 'n', f: `SUM(I${firstDataRow}:I${lastDataRow})`, s: { ...totalBase } };
+    const sum = (key) => sorted.reduce((s, r) => s + (r[key] || 0), 0);
+    const totBV = sum('budgetVend');
+    const totBI = sum('budgetInt');
+    const totBVAnn = sum('budgetVendAnnuale');
+    const totBIAnn = sum('budgetIntAnnuale');
+    const totAcq = sum('acquisito');
+    const totFat = sum('fatturato');
+    const totPrev = sum('previsioneAnno');
+    const euroTot = { ...totalBase, numFmt: EURO_FMT };
+
+    ws['B2'] = { t: 'n', f: `SUM(B${firstDataRow}:B${lastDataRow})`, s: euroTot };
+    ws['C2'] = { t: 'n', f: `SUM(C${firstDataRow}:C${lastDataRow})`, s: euroTot };
+    // Budget venditori YTD
+    ws['D2'] = { t: 'n', f: `SUM(D${firstDataRow}:D${lastDataRow})`, s: euroTot };
+    ws['E2'] = { t: 'n', f: 'B2-D2', s: euroTot };
+    ws['F2'] = { t: 'n', f: 'B2/D2-1', s: pctStyle(pct(totAcq, totBV), { bold: true }) };
+    ws['G2'] = { t: 'n', f: 'C2-D2', s: euroTot };
+    ws['H2'] = { t: 'n', f: 'C2/D2-1', s: pctStyle(pct(totFat, totBV), { bold: true }) };
+    // Budget interno YTD (stesso taglio di mesi del budget venditori)
+    ws['I2'] = { t: 'n', f: `SUM(I${firstDataRow}:I${lastDataRow})`, s: euroTot };
+    ws['J2'] = { t: 'n', f: 'B2-I2', s: euroTot };
+    ws['K2'] = { t: 'n', f: 'B2/I2-1', s: pctStyle(pct(totAcq, totBI), { bold: true }) };
+    ws['L2'] = { t: 'n', f: 'C2-I2', s: euroTot };
+    ws['M2'] = { t: 'n', f: 'C2/I2-1', s: pctStyle(pct(totFat, totBI), { bold: true }) };
+    // Previsione anno vs budget annuali (non presenti come colonne → valori calcolati)
+    ws['N2'] = { t: 'n', f: `SUM(N${firstDataRow}:N${lastDataRow})`, s: euroTot };
+    ws['O2'] = xlPctCell(pct(totPrev, totBVAnn), pctStyle(pct(totPrev, totBVAnn), { bold: true }));
+    ws['P2'] = xlPctCell(pct(totPrev, totBIAnn), pctStyle(pct(totPrev, totBIAnn), { bold: true }));
+    ws['Q2'] = { t: 'n', f: `SUM(Q${firstDataRow}:Q${lastDataRow})`, s: { ...totalBase } };
   }
 
   const headerStyle = { font: { bold: true }, alignment: { horizontal: 'center' } };
@@ -429,24 +503,40 @@ export function exportAgentsSummaryXLSX(agentRows, filename) {
     const rn = firstDataRow + idx;
     const numStyle = { numFmt: EURO_FMT };
     const bv = a.budgetVend || 0;
-    const fPct = bv ? (a.acquisito || 0) / bv - 1 : null;
-    const hPct = bv ? (a.fatturato || 0) / bv - 1 : null;
+    const bi = a.budgetInt || 0;
+    const prev = a.previsioneAnno || 0;
+    const pAcqBV = pct(a.acquisito || 0, bv);
+    const pFatBV = pct(a.fatturato || 0, bv);
+    const pAcqBI = pct(a.acquisito || 0, bi);
+    const pFatBI = pct(a.fatturato || 0, bi);
+    const pPrevBVAnn = pct(prev, a.budgetVendAnnuale || 0);
+    const pPrevBIAnn = pct(prev, a.budgetIntAnnuale || 0);
 
     ws[`A${rn}`] = { t: 's', v: a.agente || '' };
     ws[`B${rn}`] = { t: 'n', v: xlNum(a.acquisito), s: numStyle };
     ws[`C${rn}`] = { t: 'n', v: xlNum(a.fatturato), s: numStyle };
     ws[`D${rn}`] = { t: 'n', v: xlNum(a.budgetVend), s: numStyle };
     ws[`E${rn}`] = { t: 'n', f: `B${rn}-D${rn}`, s: numStyle };
-    ws[`F${rn}`] = { t: 'n', f: `IFERROR(B${rn}/D${rn}-1,"")`, s: pctStyle(fPct) };
+    ws[`F${rn}`] = { t: 'n', f: `IFERROR(B${rn}/D${rn}-1,"")`, s: pctStyle(pAcqBV) };
     ws[`G${rn}`] = { t: 'n', f: `C${rn}-D${rn}`, s: numStyle };
-    ws[`H${rn}`] = { t: 'n', f: `IFERROR(C${rn}/D${rn}-1,"")`, s: pctStyle(hPct) };
-    ws[`I${rn}`] = { t: 'n', v: a.clienti?.length || 0 };
+    ws[`H${rn}`] = { t: 'n', f: `IFERROR(C${rn}/D${rn}-1,"")`, s: pctStyle(pFatBV) };
+    ws[`I${rn}`] = { t: 'n', v: xlNum(a.budgetInt), s: numStyle };
+    ws[`J${rn}`] = { t: 'n', f: `B${rn}-I${rn}`, s: numStyle };
+    ws[`K${rn}`] = { t: 'n', f: `IFERROR(B${rn}/I${rn}-1,"")`, s: pctStyle(pAcqBI) };
+    ws[`L${rn}`] = { t: 'n', f: `C${rn}-I${rn}`, s: numStyle };
+    ws[`M${rn}`] = { t: 'n', f: `IFERROR(C${rn}/I${rn}-1,"")`, s: pctStyle(pFatBI) };
+    ws[`N${rn}`] = { t: 'n', v: xlNum(prev), s: numStyle };
+    ws[`O${rn}`] = xlPctCell(pPrevBVAnn, pctStyle(pPrevBVAnn));
+    ws[`P${rn}`] = xlPctCell(pPrevBIAnn, pctStyle(pPrevBIAnn));
+    ws[`Q${rn}`] = { t: 'n', v: a.clienti?.length || 0 };
   });
 
-  ws['!ref'] = `A1:I${Math.max(lastDataRow, 3)}`;
+  ws['!ref'] = `A1:Q${Math.max(lastDataRow, 3)}`;
   ws['!cols'] = [
-    { wch: 25 }, { wch: 13 }, { wch: 13 }, { wch: 13 },
-    { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 },
+    { wch: 25 }, { wch: 13 }, { wch: 13 },
+    { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 14 }, { wch: 12 },
+    { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 14 }, { wch: 12 },
+    { wch: 13 }, { wch: 16 }, { wch: 16 }, { wch: 11 },
   ];
 
   downloadXlsx(ws, filename);
