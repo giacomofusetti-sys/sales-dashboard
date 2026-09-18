@@ -301,6 +301,7 @@ export function enrichOrdiniAperti(ordiniRows, customers) {
 
 // XLSX export utilities
 import XLSX from 'xlsx-js-style';
+import { unzipSync, zipSync } from 'fflate';
 
 const EURO_FMT = '_-* #,##0_-;-* #,##0_-;_-* "-"??_-;_-@_-';
 const PCT_FMT = '0.0%';
@@ -335,11 +336,56 @@ function pctStyle(value, fontExtra = {}) {
   return { numFmt: PCT_FMT, fill: fill(RED_BG), font: { ...fontExtra, color: { rgb: RED_FG } } };
 }
 
+const SHEET_PATH = 'xl/worksheets/sheet1.xml';
+
+// Freeze the header row (row 3 — so the TOTALI row 2 above it stays visible too) and
+// column A. topLeftCell must be B4: with both splits, A4 is inconsistent and Excel
+// reports the file as corrupt. <pane> must be the first child of <sheetView>, before
+// <selection>, per the OOXML schema's element order.
+const FREEZE_XML =
+  '<pane xSplit="1" ySplit="3" topLeftCell="B4" activePane="bottomRight" state="frozen"/>' +
+  '<selection pane="bottomRight" activeCell="B4" sqref="B4"/>';
+
+// xlsx-js-style's writer emits a bare <sheetView workbookViewId="0"/> and silently
+// ignores ws['!freeze'] / ws['!panes'], so the panes have to be patched into the sheet
+// XML inside the xlsx zip after writing. Best-effort: on any failure the original,
+// unpatched buffer is returned — an export without freeze is an annoyance, an export
+// that won't download is a problem.
+function withFrozenPanes(buf) {
+  try {
+    const bytes = new Uint8Array(buf);
+    const zip = unzipSync(bytes);
+    if (!zip[SHEET_PATH]) throw new Error(`${SHEET_PATH} non trovato nello zip`);
+
+    let xml = new TextDecoder().decode(zip[SHEET_PATH]);
+    if (xml.includes('<pane ')) return buf; // già congelato, niente da fare
+
+    const sheetViewOpen = xml.match(/<sheetView(\s[^>]*?)?(\/?)>/);
+    if (sheetViewOpen) {
+      const [tag, attrs = '', selfClosing] = sheetViewOpen;
+      const patched = selfClosing === '/'
+        ? `<sheetView${attrs}>${FREEZE_XML}</sheetView>`
+        : `${tag}${FREEZE_XML}`;
+      xml = xml.replace(tag, () => patched); // funzione: evita l'interpretazione di $ nel replacement
+    } else if (xml.includes('<sheetViews>')) {
+      xml = xml.replace('<sheetViews>', () => `<sheetViews><sheetView workbookViewId="0">${FREEZE_XML}</sheetView>`);
+    } else {
+      throw new Error('<sheetViews> assente nel foglio generato');
+    }
+
+    zip[SHEET_PATH] = new TextEncoder().encode(xml);
+    return zipSync(zip);
+  } catch (err) {
+    console.warn('[downloadXlsx] freeze panes non applicato, esporto il file non modificato:', err);
+    return buf;
+  }
+}
+
 function downloadXlsx(ws, filename) {
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Dati');
   const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array', cellStyles: true });
-  const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const blob = new Blob([withFrozenPanes(buf)], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
