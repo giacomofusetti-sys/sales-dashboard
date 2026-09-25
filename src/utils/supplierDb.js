@@ -82,7 +82,7 @@ export async function loadDeadlineRows(fromStr, toStr) {
   while (true) {
     let query = supabase
       .from('order_materials')
-      .select('*, supplier_orders!inner(order_type, order_ref, client_name, supplier_name)')
+      .select('*, supplier_orders!inner(order_type, order_ref, client_name, supplier_name, bloccato)')
       .not('scadenza', 'is', null);
     if (filter) query = query.or(filter);
     query = query.order('scadenza').range(from, from + PAGE - 1);
@@ -137,17 +137,15 @@ export async function searchOrders(query) {
   return data;
 }
 
-// ── Find linked orders via refs (bidirectional, hybrid) ─────
-// Forward strategy depends on ref_type:
-//   - ref_type "F" (inside OV) → ref_order is reliable (points to OA/OP/OL)
-//   - ref_type "OV"/"OL"/"BPV" (inside OA/OP) → ref_order is an internal
-//     number that does NOT match actual order_ref values in the DB.
-//     Instead, match by ref_name → supplier_orders.client_name.
-// Reverse: other orders' refs that point to this order via ref_order
-//   (OV orders reference OA/OP/OL with correct ref_order values)
+// ── Find linked orders via refs (bidirectional) ────────────
+// Every ref_order is stored in the canonical order_ref format
+// (OV/2026/02773, OA/2026/0001909, ...), so links resolve directly.
+// ACCIAIERIA orders keep their real 'OA/…' order_ref and are found the same way.
+// Only order-type refs create links; DDL/BPL/DDF/BPV are documents, not nodes.
 
 const ORDER_SELECT = 'id, order_type, order_ref, order_date, client_name, supplier_name, valore_residuo, peso_totale, tot_peso_res';
-const NAME_MATCH_REF_TYPES = new Set(['OV', 'OL', 'BPV']);
+const LINK_REF_TYPES = ['F', 'OV', 'OA', 'OP', 'OL'];
+const GHOST_PREFIXES = new Set(['OV', 'OA', 'OP', 'OL']);
 
 let ghostCounter = 0;
 function makeGhostOrder(orderRef) {
@@ -179,96 +177,69 @@ export async function findLinkedOrders(orderId, orderRef) {
   if (matIds.length) {
     const { data: fwdRefs } = await supabase
       .from('material_refs')
-      .select('ref_type, ref_order, ref_name')
-      .in('material_id', matIds);
+      .select('ref_type, ref_order')
+      .in('material_id', matIds)
+      .in('ref_type', LINK_REF_TYPES);
 
-    // 1a. Reliable ref_order refs (type "F" or any non-name-match type with ref_order)
-    const reliableOrderRefs = [...new Set(
-      (fwdRefs || [])
-        .filter(r => r.ref_order && !NAME_MATCH_REF_TYPES.has(r.ref_type))
-        .map(r => r.ref_order)
+    const refOrders = [...new Set(
+      (fwdRefs || []).map(r => r.ref_order).filter(r => r && r !== orderRef)
     )];
-    if (reliableOrderRefs.length) {
+    if (refOrders.length) {
       const { data: fwdOrders } = await supabase
         .from('supplier_orders')
         .select(ORDER_SELECT)
-        .in('order_ref', reliableOrderRefs);
+        .in('order_ref', refOrders);
       const foundRefs = new Set((fwdOrders || []).map(o => o.order_ref));
       for (const o of (fwdOrders || [])) {
         if (o.id !== orderId) linkedMap.set(o.id, o);
       }
-      // Create ghost nodes for refs that didn't resolve
-      for (const ref of reliableOrderRefs) {
-        if (!foundRefs.has(ref)) {
+      // Ghost nodes for order refs not present in the archive
+      for (const ref of refOrders) {
+        if (!foundRefs.has(ref) && GHOST_PREFIXES.has(ref.split('/')[0])) {
           const ghost = makeGhostOrder(ref);
           linkedMap.set(ghost.id, ghost);
         }
       }
     }
-
-    // 1b. Name-based matching for OV/OL/BPV refs (ref_order unreliable)
-    //     Use ref_name to find orders of the target type by client_name
-    //     If no match found and ref has ref_order or ref_name, create ghost node
-    const nameRefs = (fwdRefs || []).filter(r => NAME_MATCH_REF_TYPES.has(r.ref_type) && (r.ref_name || r.ref_order));
-    // Group by unique ref identity (ref_order or ref_name) to avoid duplicate ghosts
-    const nameRefEntries = []; // { ref, keyword, refType }
-    const seenNameRefs = new Set();
-    for (const r of nameRefs) {
-      const key = r.ref_order || r.ref_name;
-      if (seenNameRefs.has(key)) continue;
-      seenNameRefs.add(key);
-      const keyword = r.ref_name
-        ? r.ref_name.trim().split(/\s+/).sort((a, b) => b.length - a.length)[0]?.toUpperCase()
-        : null;
-      nameRefEntries.push({ ref: r, keyword: keyword && keyword.length >= 3 ? keyword : null });
-    }
-
-    for (const entry of nameRefEntries) {
-      let found = false;
-      if (entry.keyword) {
-        const { data: nameOrders } = await supabase
-          .from('supplier_orders')
-          .select(ORDER_SELECT)
-          .eq('order_type', entry.ref.ref_type)
-          .ilike('client_name', `%${entry.keyword}%`)
-          .limit(20);
-        for (const o of (nameOrders || [])) {
-          if (o.id !== orderId) { linkedMap.set(o.id, o); found = true; }
-        }
-      }
-      // Ghost node if nothing found and we have a ref_order to display
-      if (!found && entry.ref.ref_order) {
-        const ghost = makeGhostOrder(entry.ref.ref_order);
-        linkedMap.set(ghost.id, ghost);
-      }
-    }
   }
 
-  // 2. Reverse: other orders' refs that point to this order via ref_order
-  //    Also search with ACCIAIERIA prefix variant (ACCIAIERIA orders have
-  //    order_ref like "ACCIAIERIA/2026/..." but might be referenced as "OA/2026/...")
-  const refVariants = [orderRef];
-  if (orderRef.startsWith('ACCIAIERIA/')) {
-    refVariants.push('OA/' + orderRef.slice('ACCIAIERIA/'.length));
-  } else if (orderRef.startsWith('OA/')) {
-    refVariants.push('ACCIAIERIA/' + orderRef.slice('OA/'.length));
-  }
+  // 2. Reverse: other orders' refs that point to this order
+  const { data: revData } = await supabase
+    .from('material_refs')
+    .select('material_id, order_materials!inner(order_id, supplier_orders!inner(' + ORDER_SELECT + '))')
+    .eq('ref_order', orderRef)
+    .in('ref_type', LINK_REF_TYPES);
 
-  for (const ref of refVariants) {
-    const { data: revData } = await supabase
-      .from('material_refs')
-      .select('material_id, order_materials!inner(order_id, supplier_orders!inner(' + ORDER_SELECT + '))')
-      .eq('ref_order', ref);
-
-    for (const r of (revData || [])) {
-      const so = r.order_materials?.supplier_orders;
-      if (so && so.id !== orderId && !linkedMap.has(so.id)) {
-        linkedMap.set(so.id, so);
-      }
+  for (const r of (revData || [])) {
+    const so = r.order_materials?.supplier_orders;
+    if (so && so.id !== orderId && !linkedMap.has(so.id)) {
+      linkedMap.set(so.id, so);
     }
   }
 
   return [...linkedMap.values()];
+}
+
+// ── Last import timestamp ────────────────────────────────────
+export async function loadLastUpdate() {
+  const { data, error } = await supabase
+    .from('supplier_orders')
+    .select('upload_date')
+    .order('upload_date', { ascending: false, nullsFirst: false })
+    .limit(1);
+  if (error) throw error;
+  return data?.[0]?.upload_date ?? null;
+}
+
+// ── Import one order type snapshot (atomic, server-side) ─────
+export async function importSupplierSnapshot(type, orders, force = false) {
+  const { data, error } = await supabase.rpc('import_supplier_snapshot', {
+    p_type: type,
+    p_orders: orders,
+    p_force: force,
+  });
+  if (error) throw error;
+  return data;
 }
 
 // ── Load notes ───────────────────────────────────────────────
@@ -315,213 +286,4 @@ export async function updateScadenzaEffettiva(materialId, date) {
     .update({ scadenza_effettiva: date })
     .eq('id', materialId);
   if (error) throw error;
-}
-
-// ── Import parsed data (batch upsert orders + materials + refs) ──
-
-const BATCH_ORDERS = 50;
-const BATCH_MATERIALS = 200;
-const BATCH_REFS = 500;
-
-function toOrderRow(orderType, order) {
-  return {
-    order_type: orderType,
-    order_ref: order.orderRef,
-    order_date: order.orderDate || null,
-    client_code: order.clientCode || null,
-    client_name: order.clientName || null,
-    client_ref: order.clientRef || null,
-    client_order_date: order.clientOrderDate || null,
-    porto: order.porto || null,
-    destinazione: order.destinazione || null,
-    valore_residuo: order.valoreResiduo || null,
-    peso_totale: order.pesoTotale || null,
-    supplier_code: order.supplierCode || null,
-    supplier_name: order.supplierName || null,
-    supplier_phone: order.supplierPhone || null,
-    tot_peso_res: order.totPesoRes || null,
-    raw_header: order.rawHeader || null,
-    upload_date: new Date().toISOString(),
-  };
-}
-
-function toMatRow(orderId, mat) {
-  return {
-    order_id: orderId,
-    pos: mat.pos || null,
-    scadenza: mat.scadenza || null,
-    codice_prodotto: mat.codiceProdotto || null,
-    descrizione: mat.descrizione || null,
-    giacenza: mat.giacenza ?? null,
-    impegnato: mat.impegnato ?? null,
-    in_ordine: mat.inOrdine ?? null,
-    cons_richiesta: mat.consRichiesta || null,
-    rif_pos_cliente: mat.rifPosCliente || null,
-    peso: mat.peso ?? null,
-    ordinato: mat.ordinato ?? null,
-    ricevuto: mat.ricevuto ?? null,
-    valore_residuo: mat.valoreResiduo ?? null,
-    prenotato: mat.prenotato ?? null,
-    qty_inviata: mat.qtyInviata ?? null,
-    kg: mat.kg ?? null,
-    trattamento: mat.trattamento || null,
-    bolla: mat.bolla || null,
-    status: mat.status || null,
-    cassone: mat.cassone || null,
-  };
-}
-
-export async function importParsedOrders(orderType, parsedOrders, onProgress) {
-  const total = parsedOrders.length;
-  let totalOrders = 0;
-  let totalMaterials = 0;
-  let totalRefs = 0;
-
-  // Step 1: Batch upsert orders → get IDs mapped by order_ref
-  const refToId = new Map();
-  for (let i = 0; i < total; i += BATCH_ORDERS) {
-    const chunk = parsedOrders.slice(i, i + BATCH_ORDERS);
-    const rows = chunk.map(o => toOrderRow(orderType, o));
-    const { data, error } = await supabase
-      .from('supplier_orders')
-      .upsert(rows, { onConflict: 'order_type,order_ref' })
-      .select('id, order_ref');
-    if (error) throw error;
-    for (const row of data) refToId.set(row.order_ref, row.id);
-    totalOrders += data.length;
-    if (onProgress) onProgress({ current: Math.min(i + BATCH_ORDERS, total), total });
-  }
-
-  // Step 2: Collect all order IDs → batch delete old refs
-  const allOrderIds = [...refToId.values()];
-  // Get old material IDs for these orders (paginated, Supabase max 1000)
-  const oldMatIds = [];
-  for (let i = 0; i < allOrderIds.length; i += 200) {
-    const chunk = allOrderIds.slice(i, i + 200);
-    const { data } = await supabase
-      .from('order_materials')
-      .select('id')
-      .in('order_id', chunk);
-    if (data) oldMatIds.push(...data.map(m => m.id));
-  }
-  // Batch delete refs for old materials
-  for (let i = 0; i < oldMatIds.length; i += 500) {
-    const chunk = oldMatIds.slice(i, i + 500);
-    await supabase.from('material_refs').delete().in('material_id', chunk);
-  }
-
-  // Preserve user-set scadenza_effettiva across re-imports. Keyed by
-  // (order_id, codice_prodotto, scadenza) — stable even when pos changes
-  // (OA/OP now assign a synthetic pos so previously null-pos rows would
-  // otherwise orphan their effective deadlines).
-  const preserveSE = new Map();
-  for (let i = 0; i < allOrderIds.length; i += 200) {
-    const chunk = allOrderIds.slice(i, i + 200);
-    const { data } = await supabase
-      .from('order_materials')
-      .select('order_id, codice_prodotto, scadenza, scadenza_effettiva')
-      .in('order_id', chunk)
-      .not('scadenza_effettiva', 'is', null);
-    for (const m of (data || [])) {
-      preserveSE.set(
-        `${m.order_id}|${m.codice_prodotto}|${m.scadenza || ''}`,
-        m.scadenza_effettiva,
-      );
-    }
-  }
-
-  // Clean up legacy null-pos materials. Parsers now always populate pos
-  // (synthetic for OA/OP), so any remaining null-pos rows would orphan
-  // on the next upsert (which matches on pos).
-  for (let i = 0; i < allOrderIds.length; i += 200) {
-    const chunk = allOrderIds.slice(i, i + 200);
-    await supabase
-      .from('order_materials')
-      .delete()
-      .in('order_id', chunk)
-      .is('pos', null);
-  }
-
-  // Step 3: Batch upsert materials → get IDs for ref linking
-  // Build flat list of { matRow, refs[] } with order_id resolved
-  const matEntries = [];
-  for (const order of parsedOrders) {
-    const orderId = refToId.get(order.orderRef);
-    for (const mat of order.materials || []) {
-      const row = toMatRow(orderId, mat);
-      const preserved = preserveSE.get(
-        `${row.order_id}|${row.codice_prodotto}|${row.scadenza || ''}`,
-      );
-      if (preserved) row.scadenza_effettiva = preserved;
-      matEntries.push({ row, refs: mat.refs || [] });
-    }
-  }
-
-  // Dedup by DB conflict key (order_id, codice_prodotto, pos) — with NULLS NOT DISTINCT,
-  // two rows with same code + null pos collide. Keep the entry with more data.
-  const scoreEntry = (e) => {
-    const nonNull = Object.values(e.row).filter(v => v != null && v !== '').length;
-    return (e.refs?.length || 0) * 1000 + nonNull;
-  };
-  const dedupedMap = new Map();
-  for (const entry of matEntries) {
-    const key = `${entry.row.order_id}|${entry.row.codice_prodotto}|${entry.row.pos || ''}`;
-    const existing = dedupedMap.get(key);
-    if (!existing || scoreEntry(entry) > scoreEntry(existing)) {
-      dedupedMap.set(key, entry);
-    }
-  }
-  const dedupedEntries = [...dedupedMap.values()];
-
-  const matKeyToRefs = new Map(); // "orderId|codice|pos" → refs[]
-  const ordersWithMatsSet = new Set();
-  for (let i = 0; i < dedupedEntries.length; i += BATCH_MATERIALS) {
-    const chunk = dedupedEntries.slice(i, i + BATCH_MATERIALS);
-    const rows = chunk.map(e => e.row);
-    const { data, error } = await supabase
-      .from('order_materials')
-      .upsert(rows, { onConflict: 'order_id,codice_prodotto,pos' })
-      .select('id, order_id, codice_prodotto, pos');
-    if (error) throw error;
-    totalMaterials += data.length;
-
-    // Map returned IDs back to refs via composite key
-    // First, build lookup from chunk
-    const chunkLookup = new Map();
-    for (const entry of chunk) {
-      const key = `${entry.row.order_id}|${entry.row.codice_prodotto}|${entry.row.pos}`;
-      chunkLookup.set(key, entry.refs);
-    }
-    for (const row of data) {
-      ordersWithMatsSet.add(row.order_id);
-      const key = `${row.order_id}|${row.codice_prodotto}|${row.pos}`;
-      const refs = chunkLookup.get(key);
-      if (refs?.length) matKeyToRefs.set(row.id, refs);
-    }
-  }
-
-  // Step 4: Batch insert all refs
-  const allRefRows = [];
-  for (const [materialId, refs] of matKeyToRefs) {
-    for (const r of refs) {
-      allRefRows.push({
-        material_id: materialId,
-        ref_type: r.refType || null,
-        ref_code: r.refCode || null,
-        ref_name: r.refName || null,
-        ref_order: r.refOrder || null,
-        ref_date: r.refDate || null,
-        ref_qty: r.refQty ?? null,
-        delivery_date: r.deliveryDate || null,
-      });
-    }
-  }
-  for (let i = 0; i < allRefRows.length; i += BATCH_REFS) {
-    const chunk = allRefRows.slice(i, i + BATCH_REFS);
-    const { error } = await supabase.from('material_refs').insert(chunk);
-    if (error) throw error;
-  }
-  totalRefs = allRefRows.length;
-
-  return { totalOrders, totalMaterials, totalRefs, ordersWithMaterials: ordersWithMatsSet.size };
 }

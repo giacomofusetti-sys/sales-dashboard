@@ -374,6 +374,11 @@ function DetailTable({ rows, onOrderClick }) {
                       {orderInfo.order_ref}
                     </button>
                   ) : orderInfo.order_ref}
+                  {orderInfo.order_type === 'OV' && orderInfo.bloccato === 'B' && (
+                    <span title="Ordine non ancora approvato dalla direzione: non si può bollettare né spedire" style={{ marginLeft: 6, fontSize: 9, fontWeight: 700, color: 'var(--red)', padding: '1px 4px', background: 'var(--red-bg)', borderRadius: 3, border: '1px solid var(--red-border)', whiteSpace: 'nowrap', fontFamily: 'var(--font-sans, inherit)' }}>
+                      Da approvare
+                    </span>
+                  )}
                 </td>
                 <td style={tdStyle}>{orderInfo.supplier_name || orderInfo.client_name || '\u2014'}</td>
                 <td style={{ ...tdStyle, fontFamily: 'var(--font-serif)' }}>{d.codice_prodotto || '\u2014'}</td>

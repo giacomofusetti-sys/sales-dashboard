@@ -33,8 +33,29 @@ function daysUntilDeadline(mat) {
   return Math.ceil((new Date(dateStr) - new Date()) / 86400000);
 }
 
+const STALE_DAYS = 3;
+
+function LastUpdateBanner({ lastUpdate }) {
+  const [now] = useState(() => Date.now());
+  if (!lastUpdate) {
+    return (
+      <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--red)', marginBottom: 12 }}>
+        Nessun dato importato — caricare Dati.xlsx
+      </div>
+    );
+  }
+  const d = new Date(lastUpdate);
+  const stale = now - d.getTime() > STALE_DAYS * 86400000;
+  const label = `${d.toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric' })} ${d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })}`;
+  return (
+    <div style={{ fontSize: 12, marginBottom: 12, color: stale ? 'var(--red)' : 'var(--text-tertiary)', fontWeight: stale ? 700 : 400 }}>
+      Dati aggiornati al {label}{stale && ' — dati vecchi, ricaricare Dati.xlsx'}
+    </div>
+  );
+}
+
 function MonitorContent() {
-  const { orders, materials, loading } = useSupplierData();
+  const { orders, materials, loading, lastUpdate } = useSupplierData();
   const [tab, setTab] = useState('scadenze');
   const [highlightOrder, setHighlightOrder] = useState(null);
   const [returnTo, setReturnTo] = useState(null); // tab to return to (e.g. 'mappa')
@@ -105,6 +126,8 @@ function MonitorContent() {
 
         {!loading && (
           <>
+            <LastUpdateBanner lastUpdate={lastUpdate} />
+
             {/* 1b. Tabs with urgency badges */}
             <div style={{ borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', marginBottom: 16, overflowX: 'auto' }}>
               {TABS.map(t => {
