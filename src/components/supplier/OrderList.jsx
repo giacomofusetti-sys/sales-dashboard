@@ -12,6 +12,24 @@ const SORT_OPTIONS = [
   { value: 'scadenza', label: 'Scadenza' },
 ];
 
+const APPROVAL_WINDOW_DAYS = 7;
+
+// Local-date ISO string (toISOString would shift to UTC)
+function localIso(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// OV with bloccato = 'B' = not yet approved by management: work can proceed,
+// but it can't be shipped. It becomes urgent when a position's deadline
+// (effective if set) is already past or within 7 days.
+function isUrgentApproval(order, mats, limitIso) {
+  if (order.bloccato !== 'B') return false;
+  return mats.some(m => {
+    const d = m.scadenza_effettiva || m.scadenza;
+    return d && d <= limitIso;
+  });
+}
+
 function earliestScadenza(mats) {
   let min = null;
   for (const m of mats) {
@@ -30,9 +48,23 @@ export default function OrderList({ orderType, highlightOrder }) {
   const [bulkDeadline, setBulkDeadline] = useState(null); // { orderId, date }
   const [sortBy, setSortBy] = useState('order_ref');
   const [sortDir, setSortDir] = useState('asc');
+  const [approvalFilter, setApprovalFilter] = useState('all'); // OV only: 'all' | 'urgent'
   const highlightRef = useRef(null);
 
   const typeOrders = orders[orderType] || [];
+
+  const approvalLimit = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + APPROVAL_WINDOW_DAYS);
+    return localIso(d);
+  }, []);
+
+  const urgentApprovalIds = useMemo(() => {
+    if (orderType !== 'OV') return new Set();
+    return new Set(typeOrders
+      .filter(o => isUrgentApproval(o, materials[o.id] || [], approvalLimit))
+      .map(o => o.id));
+  }, [orderType, typeOrders, materials, approvalLimit]);
 
   // Auto-expand and scroll to highlighted order
   useEffect(() => {
@@ -51,7 +83,10 @@ export default function OrderList({ orderType, highlightOrder }) {
   const filtered = useMemo(() => {
     // Hide orders with zero materials (completely evasi / empty) — per Ester,
     // these are parsing errors and shouldn't appear in the list.
-    const withMats = typeOrders.filter(o => (materials[o.id] || []).length > 0);
+    let withMats = typeOrders.filter(o => (materials[o.id] || []).length > 0);
+    if (orderType === 'OV' && approvalFilter === 'urgent') {
+      withMats = withMats.filter(o => urgentApprovalIds.has(o.id));
+    }
     const q = search.trim().toLowerCase();
     const afterSearch = !q ? withMats : withMats.filter(o => {
       if (o.order_ref.toLowerCase().includes(q)) return true;
@@ -82,7 +117,7 @@ export default function OrderList({ orderType, highlightOrder }) {
       return sortDir === 'asc' ? cmp : -cmp;
     });
     return sorted;
-  }, [typeOrders, materials, search, sortBy, sortDir]);
+  }, [typeOrders, materials, search, sortBy, sortDir, orderType, approvalFilter, urgentApprovalIds]);
 
   const getNotesForOrder = (orderRef) =>
     notes.filter(n => n.order_type === orderType && n.order_ref === orderRef);
@@ -144,16 +179,38 @@ export default function OrderList({ orderType, highlightOrder }) {
             {sortDir === 'asc' ? '↑' : '↓'}
           </button>
         </div>
+        {orderType === 'OV' && (
+          <div style={{ display: 'flex', borderRadius: 'var(--radius-sm)', overflow: 'hidden', border: '1px solid var(--border)' }}>
+            {[
+              { key: 'all', label: 'Tutti' },
+              { key: 'urgent', label: `Da sbloccare urgenti (${urgentApprovalIds.size})` },
+            ].map(f => {
+              const active = approvalFilter === f.key;
+              return (
+                <button key={f.key} onClick={() => setApprovalFilter(f.key)}
+                  title={f.key === 'urgent' ? `OV da approvare con scadenze passate o entro ${APPROVAL_WINDOW_DAYS} giorni` : undefined}
+                  style={{
+                    fontSize: 11, fontWeight: 600, padding: '5px 10px', border: 'none',
+                    background: active ? (f.key === 'urgent' ? 'var(--red)' : 'var(--accent)') : 'var(--bg-card)',
+                    color: active ? '#fff' : f.key === 'urgent' && urgentApprovalIds.size > 0 ? 'var(--red)' : 'var(--text-secondary)',
+                    cursor: 'pointer', transition: 'all 0.15s',
+                  }}>
+                  {f.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Count */}
       <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 12 }}>
-        {filtered.length} ordini {search && `(filtrati da ${typeOrders.length})`}
+        {filtered.length} ordini {(search || approvalFilter === 'urgent') && `(filtrati da ${typeOrders.length})`}
       </div>
 
       {filtered.length === 0 && (
         <div style={{ textAlign: 'center', padding: '2rem 0', color: 'var(--text-tertiary)', fontSize: 13 }}>
-          {typeOrders.length === 0 ? 'Nessun ordine caricato. Vai su Upload per importare i PDF.' : 'Nessun risultato.'}
+          {typeOrders.length === 0 ? 'Nessun ordine caricato. Vai su Upload per importare Dati.xlsx.' : 'Nessun risultato.'}
         </div>
       )}
 
@@ -215,6 +272,22 @@ export default function OrderList({ orderType, highlightOrder }) {
                 <span style={{ fontSize: 13, color: 'var(--text-secondary)', flex: 1 }}>
                   {order.client_name || order.supplier_name || ''}
                 </span>
+                {orderType === 'OV' && order.bloccato === 'B' && (
+                  urgentApprovalIds.has(order.id) ? (
+                    <span title="Ordine non ancora approvato dalla direzione: non si può bollettare né spedire" style={{ fontSize: 10, fontWeight: 700, color: 'var(--red)', padding: '2px 6px', background: 'var(--red-bg)', borderRadius: 3, border: '1px solid var(--red-border)', whiteSpace: 'nowrap' }}>
+                      Da approvare
+                    </span>
+                  ) : (
+                    <span title="Ordine non ancora approvato dalla direzione" style={{ fontSize: 10, color: 'var(--text-tertiary)', padding: '2px 6px', borderRadius: 3, border: '1px solid var(--border)', whiteSpace: 'nowrap' }}>
+                      Da approvare
+                    </span>
+                  )
+                )}
+                {orderType !== 'OV' && orderType !== 'OL' && order.bloccato && (
+                  <span style={{ fontSize: 10, color: 'var(--text-tertiary)', padding: '2px 6px', borderRadius: 3, border: '1px solid var(--border)', whiteSpace: 'nowrap' }}>
+                    Bloccato
+                  </span>
+                )}
                 {firstScad && (
                   <span style={{ fontSize: 11, fontFamily: 'var(--font-serif)', color: 'var(--text-secondary)' }}>
                     Scad. {new Date(firstScad).toLocaleDateString('it-IT')}
@@ -304,14 +377,14 @@ export default function OrderList({ orderType, highlightOrder }) {
                             {orderType === 'OL' && <th style={thStyle}>Pos</th>}
                             <th style={thStyle}>Scadenza</th>
                             <th style={thStyle}>Scad. Effettiva</th>
-                            {orderType === 'OV' && <th style={thStyle}>Rif. Pos.</th>}
+                            {orderType === 'OV' && <><th style={thStyle}>Rif. Pos.</th><th style={thStyle}>Art. cliente</th></>}
                             <th style={thStyle}>Codice</th>
                             <th style={thStyle}>Descrizione</th>
                             {orderType === 'OV' && <><th style={thStyle}>Giacenza</th><th style={thStyle}>Impegnato</th><th style={thStyle}>Disponib.</th><th style={thStyle}>In Ordine</th><th style={thStyle}>Peso</th></>}
                             {(orderType === 'OA' || orderType === 'OP' || orderType === 'ACCIAIERIA') && (
                               <><th style={thStyle}>Ordinato</th><th style={thStyle}>Ricevuto</th><th style={thStyle}>Val. Res.</th><th style={thStyle}>Scad. Cl.</th></>
                             )}
-                            {orderType === 'OL' && <><th style={thStyle}>Qty</th><th style={thStyle}>Kg</th><th style={thStyle}>Trattamento</th><th style={thStyle}>Status</th><th style={thStyle}>Bolla</th><th style={thStyle}>Cassone</th></>}
+                            {orderType === 'OL' && <><th style={thStyle}>Qty</th><th style={thStyle}>Kg</th><th style={thStyle}>Trattamento</th><th style={thStyle}>Inviato</th><th style={thStyle}>Bolla</th><th style={thStyle}>Cassone</th></>}
                             <th style={thStyle}>Rif.</th>
                             <th style={thStyle}>Note</th>
                           </tr>
@@ -361,6 +434,11 @@ export default function OrderList({ orderType, highlightOrder }) {
                                     {mat.rif_pos_cliente || '—'}
                                   </td>
                                 )}
+                                {orderType === 'OV' && (
+                                  <td style={{ ...tdStyle, fontFamily: 'var(--font-serif)', fontSize: 11 }}>
+                                    {mat.articolo_cliente || '—'}
+                                  </td>
+                                )}
                                 <td style={{ ...tdStyle, fontFamily: 'var(--font-serif)', fontWeight: 600 }}>{mat.codice_prodotto || '—'}</td>
                                 <td style={tdStyle}>{mat.descrizione || '—'}</td>
                                 {orderType === 'OV' && (() => {
@@ -400,7 +478,7 @@ export default function OrderList({ orderType, highlightOrder }) {
                                     <td style={{ ...tdStyle, fontFamily: 'var(--font-serif)' }}>{fmtNum(mat.qty_inviata)}</td>
                                     <td style={{ ...tdStyle, fontFamily: 'var(--font-serif)' }}>{fmtNum(mat.kg)}</td>
                                     <td style={{ ...tdStyle, fontSize: 11 }}>{mat.trattamento || '—'}</td>
-                                    <td style={{ ...tdStyle, fontSize: 11 }}>{mat.status || '—'}</td>
+                                    <td style={{ ...tdStyle, fontSize: 10, color: 'var(--text-secondary)' }}>{mat.descrizione_inviata || '—'}</td>
                                     <td style={{ ...tdStyle, fontSize: 11, fontFamily: 'var(--font-serif)' }}>{fmtBolla(mat.bolla)}</td>
                                     <td style={{ ...tdStyle, fontSize: 11, fontFamily: 'var(--font-serif)' }}>{mat.cassone || '—'}</td>
                                   </>

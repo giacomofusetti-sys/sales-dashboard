@@ -9,8 +9,10 @@ import {
   saveOrderNote,
   deleteOrderNote as deleteNoteDb,
   updateScadenzaEffettiva as updateDeadlineDb,
-  importParsedOrders,
+  loadLastUpdate,
 } from '../utils/supplierDb';
+
+const ORDER_TYPES = ['OV', 'OA', 'OP', 'OL', 'ACCIAIERIA'];
 
 const SupplierCtx = createContext(null);
 
@@ -20,54 +22,64 @@ export function SupplierDataProvider({ children }) {
   const [refs, setRefs] = useState({});                // { materialId: [...] }
   const [notes, setNotes] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [importing, setImporting] = useState(false);
+  const [lastUpdate, setLastUpdate] = useState(null);
 
-  // Initial load — orders + materials per type, refs loaded on-demand
-  useEffect(() => {
-    (async () => {
-      try {
-        console.log('[SupplierData] starting initial load...');
-        const types = ['OV', 'OA', 'OP', 'OL', 'ACCIAIERIA'];
-        const allOrders = {};
-        const allMats = {};
+  // Full load from scratch — orders + materials per type, refs loaded on-demand.
+  // Used for the initial load and after every import (no reuse of in-memory state).
+  // `loading` is only true during the first load, so a reload doesn't unmount the UI.
+  const reloadAll = useCallback(async () => {
+    try {
+      console.log('[SupplierData] starting full load...');
+      const allOrders = {};
+      const allMats = {};
 
-        for (const t of types) {
-          try {
-            const ords = await loadSupplierOrders(t);
-            allOrders[t] = ords;
-
-            if (ords.length) {
-              const mats = await loadOrderMaterials(ords.map(o => o.id));
-              for (const m of mats) {
-                if (!allMats[m.order_id]) allMats[m.order_id] = [];
-                allMats[m.order_id].push(m);
-              }
-            }
-          } catch (err) {
-            console.error(`[SupplierData] error loading type ${t}:`, err);
-            allOrders[t] = [];
-          }
-        }
-
-        let allNotes = [];
+      for (const t of ORDER_TYPES) {
         try {
-          allNotes = await loadOrderNotes();
+          const ords = await loadSupplierOrders(t);
+          allOrders[t] = ords;
+
+          if (ords.length) {
+            const mats = await loadOrderMaterials(ords.map(o => o.id));
+            for (const m of mats) {
+              if (!allMats[m.order_id]) allMats[m.order_id] = [];
+              allMats[m.order_id].push(m);
+            }
+          }
         } catch (err) {
-          console.error('[SupplierData] error loading notes:', err);
+          console.error(`[SupplierData] error loading type ${t}:`, err);
+          allOrders[t] = [];
         }
-
-        console.log('[SupplierData] load complete:', Object.entries(allOrders).map(([k, v]) => `${k}=${v.length}`).join(', '));
-
-        setOrders(allOrders);
-        setMaterials(allMats);
-        setNotes(allNotes);
-      } catch (err) {
-        console.error('[SupplierData] load error:', err);
-      } finally {
-        setLoading(false);
       }
-    })();
+
+      let allNotes = [];
+      try {
+        allNotes = await loadOrderNotes();
+      } catch (err) {
+        console.error('[SupplierData] error loading notes:', err);
+      }
+
+      let last = null;
+      try {
+        last = await loadLastUpdate();
+      } catch (err) {
+        console.error('[SupplierData] error loading last update:', err);
+      }
+
+      console.log('[SupplierData] load complete:', Object.entries(allOrders).map(([k, v]) => `${k}=${v.length}`).join(', '));
+
+      setOrders(allOrders);
+      setMaterials(allMats);
+      setRefs({});
+      setNotes(allNotes);
+      setLastUpdate(last);
+    } catch (err) {
+      console.error('[SupplierData] load error:', err);
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => { reloadAll(); }, [reloadAll]);
 
   // Fetch refs on-demand for a single order (called when user expands an order)
   const fetchRefs = useCallback(async (orderId) => {
@@ -80,52 +92,6 @@ export function SupplierDataProvider({ children }) {
       console.error(`[SupplierData] error loading refs for order ${orderId}:`, err);
     }
   }, [refs]);
-
-  // Import parsed PDF data
-  const importData = useCallback(async (orderType, parsedOrders, onProgress) => {
-    setImporting(true);
-    try {
-      console.log(`[importData] importing ${parsedOrders.length} orders as type="${orderType}"`);
-      const result = await importParsedOrders(orderType, parsedOrders, onProgress);
-      console.log(`[importData] import done:`, result);
-
-      // Reload affected type
-      const ords = await loadSupplierOrders(orderType);
-      console.log(`[importData] reload ${orderType}: ${ords.length} orders`);
-      setOrders(prev => ({ ...prev, [orderType]: ords }));
-
-      // Reload materials for this type
-      if (ords.length) {
-        const mats = await loadOrderMaterials(ords.map(o => o.id));
-        const newMats = {};
-        for (const m of mats) {
-          if (!newMats[m.order_id]) newMats[m.order_id] = [];
-          newMats[m.order_id].push(m);
-        }
-        setMaterials(prev => {
-          const updated = { ...prev };
-          for (const o of ords) delete updated[o.id];
-          return { ...updated, ...newMats };
-        });
-      }
-
-      // Clear cached refs for this type so they reload on expand
-      setRefs(prev => {
-        const updated = { ...prev };
-        const orderIds = ords.map(o => o.id);
-        for (const key of Object.keys(updated)) {
-          if (key.startsWith('_loaded_') && orderIds.includes(key.slice(8))) {
-            delete updated[key];
-          }
-        }
-        return updated;
-      });
-
-      return result;
-    } finally {
-      setImporting(false);
-    }
-  }, []);
 
   // Save a note
   const upsertNote = useCallback(async (noteData) => {
@@ -156,9 +122,9 @@ export function SupplierDataProvider({ children }) {
 
   const value = {
     orders, materials, refs, notes,
-    loading, importing,
+    loading, lastUpdate,
     countDeadlines, loadDeadlineRows,
-    importData, fetchRefs, upsertNote, deleteNote, updateDeadline,
+    reloadAll, fetchRefs, upsertNote, deleteNote, updateDeadline,
   };
 
   return <SupplierCtx.Provider value={value}>{children}</SupplierCtx.Provider>;
